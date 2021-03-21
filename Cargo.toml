@@ -1,11 +1,11 @@
 [package]
-authors = ['Substrate DevHub <https://github.com/substrate-developer-hub>']
-description = 'FRAME pallet template for defining custom runtime logic.'
+authors = ['Octopus Network <hi@oct.network>']
+description = 'FRAME pallet for joining the octopus network as an appchain.'
 edition = '2018'
-homepage = 'https://substrate.dev'
+homepage = 'https://oct.network'
 license = 'Unlicense'
-name = 'pallet-template'
-repository = 'https://github.com/substrate-developer-hub/substrate-node-template/'
+name = 'pallet-octopus-appchain'
+repository = 'https://github.com/octopus-network/pallet-octopus-appchain.git'
 version = '3.0.0'
 
 [package.metadata.docs.rs]
@@ -19,14 +19,20 @@ package = 'parity-scale-codec'
 version = '2.0.0'
 
 [dependencies]
-frame-support = { default-features = false, version = '3.0.0' }
-frame-system = { default-features = false, version = '3.0.0' }
+frame-support = { default-features = false, version = '3.0.0', path = '../../../../frame/support' }
+frame-system = { default-features = false, version = '3.0.0', path = '../../../../frame/system' }
+pallet-session = { default-features = false, version = '3.0.0', path = '../../../../frame/session' }
+sp-core = { default-features = false, version = '3.0.0', path = '../../../../primitives/core' }
+sp-io = { default-features = false, version = '3.0.0', path = '../../../../primitives/io' }
+sp-runtime = { default-features = false, version = '3.0.0', path = '../../../../primitives/runtime' }
+sp-std = { default-features = false, version = '3.0.0', path = '../../../../primitives/std' }
+base64 = { default-features = false, version = '0.13', features = ['alloc'] }
+hex = { default-features = false, version = '0.4' }
+lite-json = { default-features = false, version = '0.1' }
+serde = { optional = true, version = '1.0.119' }
 
 [dev-dependencies]
-serde = { version = "1.0.119" }
-sp-core = { default-features = false, version = '3.0.0' }
-sp-io = { default-features = false, version = '3.0.0' }
-sp-runtime = { default-features = false, version = '3.0.0' }
+sp-keystore = { default-features = false, version = '0.9.0', path = '../../../../primitives/keystore' }
 
 [features]
 default = ['std']
@@ -34,4 +40,13 @@ std = [
     'codec/std',
     'frame-support/std',
     'frame-system/std',
+    'pallet-session/std',
+    'sp-core/std',
+    'sp-io/std',
+    'sp-runtime/std',
+    'sp-std/std',
+    'base64/std',
+    'hex/std',
+    'lite-json/std',
+    'serde',
 ]
