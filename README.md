@@ -1,26 +1,22 @@
-# Substrate Pallet Template
+# Octopus Appchain Pallet
 
-This is a template for a Substrate pallet which lives as its own crate so it can be imported into multiple runtimes. It is based on the ["template" pallet](https://github.com/paritytech/substrate/tree/master/bin/node-template/pallets/template) that is included with the [Substrate node template](https://github.com/paritytech/substrate/tree/master/bin/node-template).
-
-Check out the [HOWTO](HOWTO.md) to learn how to use this for your own runtime module.
-
-This README should act as a general template for distributing your pallet to others.
+This is a support component of [Octopus Network](https://oct.network/).
 
 ## Purpose
 
-This pallet acts as a template for building other pallets.
+With this pallet, a chain built from substrate can join octopus network as an appchain.
 
-It currently allows a user to put a `u32` value into storage, which triggers a runtime event.
+An appchain can rent security from motherchain on demand.
 
 ## Dependencies
 
 ### Traits
 
-This pallet does not depend on any externally defined traits.
+This pallet depend on [`CreateSignedTransaction`](https://docs.rs/frame-system/3.0.0/frame_system/offchain/trait.CreateSignedTransaction.html).
 
 ### Pallets
 
-This pallet does not depend on any other FRAME pallet or externally developed modules.
+This pallet depend on [`pallet_session`](https://docs.rs/pallet-session/3.0.0/pallet_session/).
 
 ## Installation
 
@@ -29,9 +25,9 @@ This pallet does not depend on any other FRAME pallet or externally developed mo
 To add this pallet to your runtime, simply include the following to your runtime's `Cargo.toml` file:
 
 ```TOML
-[dependencies.pallet-template]
-default_features = false
-git = 'https://github.com/substrate-developer-hub/substrate-pallet-template.git'
+[dependencies]
+pallet-session = { default-features = false, version = '3.0.0' }
+pallet-octopus-appchain = { default-features = false, git = 'https://github.com/octopus-network/pallet-octopus-appchain.git', branch = 'cargo-fix' }
 ```
 
 and update your runtime's `std` feature to include this pallet:
@@ -39,7 +35,8 @@ and update your runtime's `std` feature to include this pallet:
 ```TOML
 std = [
     # --snip--
-    'pallet-template/std',
+    'pallet-session/std',
+    'pallet-octopus-appchain/std',
 ]
 ```
 
@@ -48,21 +45,36 @@ std = [
 You should implement it's trait like so:
 
 ```rust
-/// Used for test_module
-impl pallet_template::Config for Runtime {
+parameter_types! {
+	pub const AppchainId: pallet_octopus_appchain::ChainId = 0;
+	pub const Motherchain: pallet_octopus_appchain::MotherchainType = pallet_octopus_appchain::MotherchainType::NEAR;
+	pub const GracePeriod: u32 = 5;
+	pub const UnsignedPriority: u64 = 1 << 20;
+}
+
+impl pallet_octopus_appchain::Config for Runtime {
 	type Event = Event;
+	type AuthorityId = pallet_octopus_appchain::crypto::OctopusAuthId;
+	type Call = Call;
+	type AppchainId = AppchainId;
+	type Motherchain = Motherchain;
+	const RELAY_CONTRACT_NAME: &'static [u8] = b"dev-1616239154529-4812993";
+	type GracePeriod = GracePeriod;
+	type UnsignedPriority = UnsignedPriority;
 }
 ```
 
 and include it in your `construct_runtime!` macro:
 
 ```rust
-TemplatePallet: pallet_template::{Module, Call, Storage, Event<T>},
+OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Config<T>, Event<T>, ValidateUnsigned},
 ```
 
 ### Genesis Configuration
 
-This template pallet does not have any genesis configuration.
+See [this commit of Barnacle](https://github.com/octopus-network/barnacle/commit/6bf1c8f0479887af17535024160b4ad55482dc31) for genesis configuration and other settings.
+
+We will explain these configurations in detail later.
 
 ## Reference Docs
 
