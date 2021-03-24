@@ -1,4 +1,6 @@
 # Octopus Appchain Pallet
+[![crates.io](https://img.shields.io/crates/v/pallet-octopus-appchain.svg)](https://crates.io/crates/pallet-octopus-appchain)
+[![Released API docs](https://docs.rs/pallet-octopus-appchain/badge.svg)](https://docs.rs/pallet-octopus-appchain)
 
 This is a support component of [Octopus Network](https://oct.network/).
 
@@ -16,7 +18,7 @@ This pallet depend on [`CreateSignedTransaction`](https://docs.rs/frame-system/3
 
 ### Pallets
 
-This pallet depend on [`pallet_session`](https://docs.rs/pallet-session/3.0.0/pallet_session/).
+This pallet depend on [pallet_session](https://docs.rs/pallet-session/3.0.0/pallet_session/).
 
 ## Installation
 
@@ -27,7 +29,7 @@ To add this pallet to your runtime, simply include the following to your runtime
 ```TOML
 [dependencies]
 pallet-session = { default-features = false, version = '3.0.0' }
-pallet-octopus-appchain = { default-features = false, git = 'https://github.com/octopus-network/pallet-octopus-appchain.git', branch = 'cargo-fix' }
+pallet-octopus-appchain = { default-features = false, git = 'https://github.com/octopus-network/pallet-octopus-appchain.git' }
 ```
 
 and update your runtime's `std` feature to include this pallet:

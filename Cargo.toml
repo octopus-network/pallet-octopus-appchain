@@ -3,10 +3,12 @@ authors = ['Octopus Network <hi@oct.network>']
 description = 'FRAME pallet for joining the octopus network as an appchain.'
 edition = '2018'
 homepage = 'https://oct.network'
-license = 'Unlicense'
+license = 'Apache-2.0'
 name = 'pallet-octopus-appchain'
 repository = 'https://github.com/octopus-network/pallet-octopus-appchain.git'
-version = '3.0.0'
+version = '3.0.0-pre.0'
+documentation = 'https://docs.rs/pallet-octopus-appchain'
+readme = 'README.md'
 
 [package.metadata.docs.rs]
 targets = ['x86_64-unknown-linux-gnu']
