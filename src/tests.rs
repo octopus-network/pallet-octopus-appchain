@@ -94,6 +94,14 @@ where
 	}
 }
 
+pub struct OctopusAppCrypto;
+
+impl frame_system::offchain::AppCrypto<<Signature as Verify>::Signer, Signature> for OctopusAppCrypto {
+	type RuntimeAppPublic = crypto::AuthorityId;
+	type GenericSignature = sp_core::sr25519::Signature;
+	type GenericPublic = sp_core::sr25519::Public;
+}
+
 parameter_types! {
 	pub const AppchainId: ChainId = 0;
 	pub const Motherchain: MotherchainType = MotherchainType::NEAR;
@@ -103,7 +111,7 @@ parameter_types! {
 
 impl Config for Test {
 	type Event = Event;
-	type AuthorityId = crypto::OctopusAuthId;
+	type AppCrypto = OctopusAppCrypto;
 	type Call = Call;
 	type AppchainId = AppchainId;
 	type Motherchain = Motherchain;
@@ -332,7 +340,7 @@ fn should_submit_unsigned_transaction_on_chain() {
 				<Test as SigningTypes>::Public,
 				<Test as frame_system::Config>::BlockNumber,
 				<Test as frame_system::Config>::AccountId,
-			> as SignedPayload<Test>>::verify::<crypto::OctopusAuthId>(
+			> as SignedPayload<Test>>::verify::<<Test as Config>::AppCrypto>(
 				&payload, signature
 			);
 

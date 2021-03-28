@@ -11,7 +11,7 @@ use frame_support::{
 use frame_system::{
 	self as system, ensure_none,
 	offchain::{
-		AppCrypto, CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer,
+		CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer,
 		SigningTypes,
 	},
 };
@@ -52,16 +52,10 @@ pub mod crypto {
 	use super::KEY_TYPE;
 	use sp_runtime::{
 		app_crypto::{app_crypto, sr25519},
-		MultiSignature, MultiSigner,
 	};
 	app_crypto!(sr25519, KEY_TYPE);
 
-	pub struct OctopusAuthId;
-	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for OctopusAuthId {
-		type RuntimeAppPublic = Public;
-		type GenericSignature = sp_core::sr25519::Signature;
-		type GenericPublic = sp_core::sr25519::Public;
-	}
+	pub type AuthorityId = Public;
 }
 
 /// Index of an appchain on the motherchain.
@@ -75,7 +69,7 @@ pub enum MotherchainType {
 /// This pallet's configuration trait
 pub trait Config: CreateSignedTransaction<Call<Self>> {
 	/// The identifier type for an offchain worker.
-	type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
+	type AppCrypto: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>;
 
 	/// The overarching event type.
 	type Event: From<Event<Self>> + Into<<Self as frame_system::Config>::Event>;
@@ -304,8 +298,8 @@ impl<T: Config> Module<T> {
 				validators: vals
 					.iter()
 					.map(|x| Validator {
-						id: x.1.clone(),
-						ocw_id: x.0.clone(),
+						id: x.0.clone(),
+						ocw_id: x.1.clone(),
 						weight: x.2,
 					})
 					.collect::<Vec<_>>(),
@@ -381,7 +375,7 @@ impl<T: Config> Module<T> {
 		debug::native::info!("🐙 new validator set: {:#?}", next_val_set);
 
 		// -- Sign using any account
-		let (_, result) = Signer::<T, T::AuthorityId>::any_account()
+		let (_, result) = Signer::<T, T::AppCrypto>::any_account()
 			.send_unsigned_transaction(
 				|account| ValidatorSetPayload {
 					public: account.public.clone(),
@@ -575,7 +569,7 @@ impl<T: Config> Module<T> {
 													.map(|c| *c as u8)
 													.collect::<Vec<_>>();
 												let b = hex::decode(data).unwrap();
-												<<T as SigningTypes>::Public as IdentifyAccount>::AccountId::decode(
+												<T as frame_system::Config>::AccountId::decode(
 													&mut &b[..],
 												)
 												.ok()
@@ -755,7 +749,7 @@ impl<T: Config> frame_support::unsigned::ValidateUnsigned for Module<T> {
 		// Firstly let's check that we call the right function.
 		if let Call::submit_validator_set(ref payload, ref signature) = call {
 			let signature_valid =
-				SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone());
+				SignedPayload::<T>::verify::<T::AppCrypto>(payload, signature.clone());
 			if !signature_valid {
 				return InvalidTransaction::BadProof.into();
 			}
