@@ -12,6 +12,20 @@ An appchain can rent security from motherchain on demand.
 
 ## Appchain Guide
 
+### Join octopus network 
+
+1. Register a Near account. You can refer to the [document](https://docs.near.org/docs/develop/basics/create-account) to complete the registration of the Near test network account;
+
+2. Require OCT tokens. You need to join the [Discord](https://discord.gg/6GTJBkZA9Q) of the Octopus, and apply for the OCT tokens for testing in the **#testnet** channel;
+
+3. Register Appchain. Log in to Octopus [testnet](https://testnet.oct.network/) with the Near account registered in step 1, click the register button, and input the *Appchain Name, Runtime URL, Runtime Hash, Bond Token*, and then complete the registration. After the transaction is successfully executed, save the generated **appchain_id**;
+
+4. Integrate **pallet-octopus-appchain**. You can refer to the below **Integration** section to complete Appchain integration;
+
+5. Generate the chainspec file of Appchain. Refer to this [document](https://substrate.dev/docs/en/tutorials/start-a-private-network/customspec), fill in appchain_id (generated in step 3) and relay contract name (dev-1616825757804-8762183), generate chainspec and check the data settings in it;
+
+6. Upload the chainspec file of Appchain. After uploading, contact the Octopus team to start the network on the [Discord](https://discord.gg/6GTJBkZA9Q) **#testnet** channel of the Octopus.
+
 ### Integration
 
 #### Edit Runtime `Cargo.toml`
@@ -79,15 +93,6 @@ See [this commit of Barnacle](https://github.com/octopus-network/barnacle/commit
 
 We will explain these configurations in detail later.
 
-
-### Join octopus network 
-
-1. Register a Near account. You can refer to the [document](https://docs.near.org/docs/develop/basics/create-account) to complete the registration of the Near test network account;
-2. Require OCT tokens. You need to join the [Discord](https://discord.gg/6GTJBkZA9Q) of the Octopus, and apply for the OCT tokens for testing in the **#testnet** channel;
-3. Register Appchain. Log in to Octopus [testnet](https://testnet.oct.network/) with the Near account registered in step 1, click the register button, and input the *Appchain Name, Runtime URL, Runtime Hash, Bond Token*, and then complete the registration. After the transaction is successfully executed, save the generated **appchain_id**;
-4. Integrate **pallet-octopus-appchain**. Integrate Appchain according to the above **Integration** section;
-5. Generate the chainspec file of Appchain. Refer to this [document](https://substrate.dev/docs/en/tutorials/start-a-private-network/customspec), fill in appchain_id (generated in step 3) and relay contract name (dev-1616825757804-8762183), generate chainspec and check the data settings in it;
-6. Upload the chainspec file of Appchain. After uploading, contact the Octopus team to start the network on the [Discord](https://discord.gg/6GTJBkZA9Q) **#testnet** channel of the Octopus.
 
 ## Reference Docs
 
