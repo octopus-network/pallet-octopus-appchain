@@ -10,19 +10,11 @@ With this pallet, a chain built from substrate can join octopus network as an ap
 
 An appchain can rent security from motherchain on demand.
 
-## Dependencies
+## Appchain Guide
 
-### Traits
+### Integration
 
-This pallet depend on [`CreateSignedTransaction`](https://docs.rs/frame-system/3.0.0/frame_system/offchain/trait.CreateSignedTransaction.html).
-
-### Pallets
-
-This pallet depend on [pallet_session](https://docs.rs/pallet-session/3.0.0/pallet_session/).
-
-## Installation
-
-### Runtime `Cargo.toml`
+#### Edit Runtime `Cargo.toml`
 
 To add this pallet to your runtime, simply include the following to your runtime's `Cargo.toml` file:
 
@@ -42,7 +34,16 @@ std = [
 ]
 ```
 
-### Runtime `lib.rs`
+**Traits**
+
+This pallet depend on [`CreateSignedTransaction`](https://docs.rs/frame-system/3.0.0/frame_system/offchain/trait.CreateSignedTransaction.html).
+
+**Pallets**
+
+This pallet depend on [pallet_session](https://docs.rs/pallet-session/3.0.0/pallet_session/).
+
+
+#### Edit Runtime `lib.rs`
 
 You should implement it's trait like so:
 
@@ -72,11 +73,21 @@ and include it in your `construct_runtime!` macro:
 OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Config<T>, Event<T>, ValidateUnsigned},
 ```
 
-### Genesis Configuration
+#### Genesis Configuration
 
 See [this commit of Barnacle](https://github.com/octopus-network/barnacle/commit/6bf1c8f0479887af17535024160b4ad55482dc31) for genesis configuration and other settings.
 
 We will explain these configurations in detail later.
+
+
+### Join octopus network 
+
+1. Register a Near account. You can refer to the [document](https://docs.near.org/docs/develop/basics/create-account) to complete the registration of the Near test network account;
+2. Require OCT tokens. You need to join the [Discord](https://discord.gg/6GTJBkZA9Q) of the Octopus, and apply for the OCT tokens for testing in the **#testnet** channel;
+3. Register Appchain. Log in to Octopus [testnet](https://testnet.oct.network/) with the Near account registered in step 1, click the register button, and input the *Appchain Name, Runtime URL, Runtime Hash, Bond Token*, and then complete the registration. After the transaction is successfully executed, save the generated **appchain_id**;
+4. Integrate **pallet-octopus-appchain**. Integrate Appchain according to the above **Integration** section;
+5. Generate the chainspec file of Appchain. Refer to this [document](https://substrate.dev/docs/en/tutorials/start-a-private-network/customspec), fill in appchain_id (generated in step 3) and relay contract name (dev-1616825757804-8762183), generate chainspec and check the data settings in it;
+6. Upload the chainspec file of Appchain. After uploading, contact the Octopus team to start the network on the [Discord](https://discord.gg/6GTJBkZA9Q) **#testnet** channel of the Octopus.
 
 ## Reference Docs
 
