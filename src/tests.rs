@@ -16,6 +16,11 @@ use sp_runtime::{
 	MultiSignature, RuntimeAppPublic,
 };
 use std::sync::Arc;
+use sp_core::crypto::key_types;
+use sp_runtime::{
+	testing::{UintAuthorityId}, traits::{ConvertInto, OpaqueKeys},
+	Perbill, KeyTypeId,
+};
 
 type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -28,6 +33,7 @@ frame_support::construct_runtime!(
 		UncheckedExtrinsic = UncheckedExtrinsic,
 	{
 		System: frame_system::{Module, Call, Config, Storage, Event<T>},
+		Session: pallet_session::{Module, Call, Storage, Event, Config<T>},
 		OctopusAppchain: octopus_appchain::{Module, Call, Storage, Event<T>, ValidateUnsigned},
 	}
 );
@@ -64,6 +70,46 @@ impl frame_system::Config for Test {
 	type SystemWeightInfo = ();
 	type SS58Prefix = ();
 }
+
+pub struct TestSessionHandler;
+impl pallet_session::SessionHandler<AccountId> for TestSessionHandler {
+	const KEY_TYPE_IDS: &'static [KeyTypeId] = &[key_types::DUMMY];
+
+	fn on_new_session<Ks: OpaqueKeys>(
+		_changed: bool,
+		_validators: &[(AccountId, Ks)],
+		_queued_validators: &[(AccountId, Ks)],
+	) {
+	}
+
+	fn on_disabled(_validator_index: usize) {}
+
+	fn on_genesis_session<Ks: OpaqueKeys>(_validators: &[(AccountId, Ks)]) {}
+}
+
+parameter_types! {
+	pub const Period: u32 = 10;
+	pub const Offset: u32 = 10;
+	pub const DisabledValidatorsThreshold: Perbill = Perbill::from_percent(33);
+}
+
+impl pallet_session::Config for Test {
+	type SessionManager = ();
+	type Keys = UintAuthorityId;
+	type ShouldEndSession = pallet_session::PeriodicSessions<Period, Offset>;
+	type SessionHandler = TestSessionHandler;
+	type Event = Event;
+	type ValidatorId = AccountId;
+	type ValidatorIdOf = ConvertInto;
+	type DisabledValidatorsThreshold = DisabledValidatorsThreshold;
+	type NextSessionRotation = pallet_session::PeriodicSessions<Period, Offset>;
+	type WeightInfo = ();
+}
+
+// impl pallet_session::historical::Config for Test {
+// 	type FullIdentification = ();
+// 	type FullIdentificationOf = ();
+// }
 
 type Extrinsic = TestXt<Call, ()>;
 
@@ -126,14 +172,8 @@ fn expected_val_set() -> Option<ValidatorSet<AccountId>> {
 		.unwrap()
 		.unwrap();
 
-	let ocw_id = hex::decode("306721211d5404bd9da88e0204360a1a9ab8b87c66c1bc2fcdd37f3c2222cc20")
-		.map(|b| AccountId::decode(&mut &b[..]))
-		.unwrap()
-		.unwrap();
-
 	let alice = Validator {
 		id: id,
-		ocw_id: ocw_id,
 		weight: 101,
 	};
 
@@ -142,14 +182,8 @@ fn expected_val_set() -> Option<ValidatorSet<AccountId>> {
 		.unwrap()
 		.unwrap();
 
-	let ocw_id = hex::decode("1cbd2d43530a44705ad088af313e18f80b53ef16b36177cd4b77b846f2a5f07c")
-		.map(|b| AccountId::decode(&mut &b[..]))
-		.unwrap()
-		.unwrap();
-
 	let charlie = Validator {
 		id: id,
-		ocw_id: ocw_id,
 		weight: 102,
 	};
 	let expected_val_set = ValidatorSet {
