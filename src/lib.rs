@@ -6,7 +6,7 @@ use alloc::string::{String, ToString};
 
 use frame_support::{
 	debug, decl_error, decl_event, decl_module, decl_storage, dispatch::DispatchResult, ensure,
-	traits::Get,
+	traits::{Get, OneSessionHandler},
 };
 use frame_system::{
 	self as system, ensure_none,
@@ -18,7 +18,7 @@ use frame_system::{
 use sp_core::crypto::KeyTypeId;
 use sp_runtime::{
 	offchain::{http, storage::StorageValueRef, Duration},
-	traits::IdentifyAccount,
+	traits::{Convert, IdentifyAccount},
 	transaction_validity::{
 		InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
 		ValidTransaction,
@@ -67,7 +67,7 @@ pub enum MotherchainType {
 }
 
 /// This pallet's configuration trait
-pub trait Config: CreateSignedTransaction<Call<Self>> {
+pub trait Config: CreateSignedTransaction<Call<Self>> + pallet_session::Config {
 	/// The identifier type for an offchain worker.
 	type AppCrypto: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>;
 
@@ -108,8 +108,6 @@ pub(crate) const LOG_TARGET: &'static str = "octopus";
 pub struct Validator<AccountId> {
 	/// The validator's id.
 	id: AccountId,
-	/// The id used to send ocw tx.
-	ocw_id: AccountId,
 	/// The weight of this validator in motherchain's staking system.
 	weight: u64,
 }
@@ -152,7 +150,7 @@ decl_storage! {
 		=> Vec<Validator<<T as frame_system::Config>::AccountId>>;
 	}
 	add_extra_genesis {
-		config(validators): Vec<(<T as frame_system::Config>::AccountId, <T as frame_system::Config>::AccountId, u64)>;
+		config(validators): Vec<(<T as frame_system::Config>::AccountId, u64)>;
 		build(|config| Module::<T>::initialize_validator_set(&config.validators))
 	}
 }
@@ -220,7 +218,9 @@ decl_module! {
 			let val = cur_val_set.validators
 				.iter()
 				.find(|v| {
-					v.ocw_id == payload.public.clone().into_account()
+					let id = <pallet_session::Module<T>>::key_owner(KEY_TYPE, &payload.public.clone().into_account().encode());
+					frame_support::debug::native::info!(target: LOG_TARGET, "🐙 check {:#?} == {:#?}", v.id, id);
+					<T as pallet_session::Config>::ValidatorIdOf::convert(v.id.clone()) == id
 				});
 			if val.is_none() {
 				debug::native::error!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
@@ -284,7 +284,6 @@ impl<T: Config> Module<T> {
 	fn initialize_validator_set(
 		vals: &Vec<(
 			<T as frame_system::Config>::AccountId,
-			<T as frame_system::Config>::AccountId,
 			u64,
 		)>,
 	) {
@@ -299,8 +298,7 @@ impl<T: Config> Module<T> {
 					.iter()
 					.map(|x| Validator {
 						id: x.0.clone(),
-						ocw_id: x.1.clone(),
-						weight: x.2,
+						weight: x.1,
 					})
 					.collect::<Vec<_>>(),
 			});
@@ -554,28 +552,6 @@ impl<T: Config> Module<T> {
 											}
 											_ => None,
 										});
-									let ocw_id = obj
-										.clone()
-										.into_iter()
-										.find(|(k, _)| {
-											let mut ocw_id = "ocw_id".chars();
-											k.iter().all(|k| Some(*k) == ocw_id.next())
-										})
-										.and_then(|v| match v.1 {
-											JsonValue::String(s) => {
-												let data: Vec<u8> = s
-													.iter()
-													.skip(2)
-													.map(|c| *c as u8)
-													.collect::<Vec<_>>();
-												let b = hex::decode(data).unwrap();
-												<T as frame_system::Config>::AccountId::decode(
-													&mut &b[..],
-												)
-												.ok()
-											}
-											_ => None,
-										});
 									let weight = obj
 										.clone()
 										.into_iter()
@@ -590,7 +566,6 @@ impl<T: Config> Module<T> {
 									if id.is_some() && weight.is_some() {
 										val_set.validators.push(Validator {
 											id: id.unwrap(),
-											ocw_id: ocw_id.unwrap(),
 											weight: weight.unwrap().integer as u64,
 										});
 									}
@@ -685,7 +660,7 @@ impl<T: Config> Module<T> {
 		});
 
 		<Voters<T>>::mutate(index, |vals| {
-			let exist = vals.iter().find(|v| v.ocw_id == val.ocw_id);
+			let exist = vals.iter().find(|v| v.id == val.id);
 			match exist {
 				Some(id) => {
 					debug::native::info!("🐙 duplicated ocw tx: {:?}", id);
@@ -844,5 +819,31 @@ impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 			<frame_system::Module<T>>::block_number(),
 			end_index
 		);
+	}
+}
+
+impl<T: Config> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
+	type Public = crypto::AuthorityId;
+}
+
+impl<T: Config> OneSessionHandler<T::AccountId> for Module<T> {
+	type Key = crypto::AuthorityId;
+
+	fn on_genesis_session<'a, I: 'a>(_authorities: I)
+	where
+		I: Iterator<Item = (&'a T::AccountId, Self::Key)>,
+	{
+		// ignore
+	}
+
+	fn on_new_session<'a, I: 'a>(_changed: bool, _validators: I, _queued_validators: I)
+	where
+		I: Iterator<Item = (&'a T::AccountId, Self::Key)>,
+	{
+		// ignore
+	}
+
+	fn on_disabled(_i: usize) {
+		// ignore
 	}
 }
