@@ -89,7 +89,7 @@ OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Config<T>, Eve
 
 #### Genesis Configuration
 
-See [this commit of Barnacle](https://github.com/octopus-network/barnacle/commit/5ebef3083ba8e233d35e9e8bb66c71eecca140e6) for genesis configuration and other settings.
+See the last commit of [Barnacle](https://github.com/octopus-network/barnacle) for genesis configuration and other settings.
 
 We will explain these configurations in detail later.
 
