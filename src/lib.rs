@@ -30,8 +30,8 @@ use sp_std::{prelude::*, vec::Vec};
 use codec::{Decode, Encode};
 use lite_json::json::JsonValue;
 
-// #[cfg(test)]
-// mod mock;
+#[cfg(test)]
+mod mock;
 
 #[cfg(test)]
 mod tests;

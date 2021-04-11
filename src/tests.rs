@@ -1,170 +1,14 @@
-use crate as octopus_appchain;
+use crate::mock::*;
 use crate::*;
-use codec::Decode;
-use frame_support::parameter_types;
 use sp_core::{
 	offchain::{testing, OffchainExt, TransactionPoolExt},
-	H256,
 };
 use sp_keystore::{
 	testing::KeyStore,
 	{KeystoreExt, SyncCryptoStore},
 };
-use sp_runtime::{
-	testing::{Header, TestXt},
-	traits::{BlakeTwo256, Extrinsic as ExtrinsicT, IdentifyAccount, IdentityLookup, Verify},
-	MultiSignature, RuntimeAppPublic,
-};
-use std::sync::Arc;
-use sp_core::crypto::key_types;
-use sp_runtime::{
-	testing::{UintAuthorityId}, traits::{ConvertInto, OpaqueKeys},
-	Perbill, KeyTypeId,
-};
-
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
-type Block = frame_system::mocking::MockBlock<Test>;
-
-// For testing the module, we construct a mock runtime.
-frame_support::construct_runtime!(
-	pub enum Test where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Module, Call, Config, Storage, Event<T>},
-		Session: pallet_session::{Module, Call, Storage, Event, Config<T>},
-		OctopusAppchain: octopus_appchain::{Module, Call, Storage, Event<T>, ValidateUnsigned},
-	}
-);
-
-type Signature = MultiSignature;
-type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
-
-parameter_types! {
-	pub const BlockHashCount: u64 = 250;
-	pub BlockWeights: frame_system::limits::BlockWeights =
-		frame_system::limits::BlockWeights::simple_max(1024);
-}
-impl frame_system::Config for Test {
-	type BaseCallFilter = ();
-	type BlockWeights = ();
-	type BlockLength = ();
-	type DbWeight = ();
-	type Origin = Origin;
-	type Call = Call;
-	type Index = u64;
-	type BlockNumber = u64;
-	type Hash = H256;
-	type Hashing = BlakeTwo256;
-	type AccountId = AccountId;
-	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type Event = Event;
-	type BlockHashCount = BlockHashCount;
-	type Version = ();
-	type PalletInfo = PalletInfo;
-	type AccountData = ();
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type SystemWeightInfo = ();
-	type SS58Prefix = ();
-}
-
-pub struct TestSessionHandler;
-impl pallet_session::SessionHandler<AccountId> for TestSessionHandler {
-	const KEY_TYPE_IDS: &'static [KeyTypeId] = &[key_types::DUMMY];
-
-	fn on_new_session<Ks: OpaqueKeys>(
-		_changed: bool,
-		_validators: &[(AccountId, Ks)],
-		_queued_validators: &[(AccountId, Ks)],
-	) {
-	}
-
-	fn on_disabled(_validator_index: usize) {}
-
-	fn on_genesis_session<Ks: OpaqueKeys>(_validators: &[(AccountId, Ks)]) {}
-}
-
-parameter_types! {
-	pub const Period: u32 = 10;
-	pub const Offset: u32 = 10;
-	pub const DisabledValidatorsThreshold: Perbill = Perbill::from_percent(33);
-}
-
-impl pallet_session::Config for Test {
-	type SessionManager = ();
-	type Keys = UintAuthorityId;
-	type ShouldEndSession = pallet_session::PeriodicSessions<Period, Offset>;
-	type SessionHandler = TestSessionHandler;
-	type Event = Event;
-	type ValidatorId = AccountId;
-	type ValidatorIdOf = ConvertInto;
-	type DisabledValidatorsThreshold = DisabledValidatorsThreshold;
-	type NextSessionRotation = pallet_session::PeriodicSessions<Period, Offset>;
-	type WeightInfo = ();
-}
-
-// impl pallet_session::historical::Config for Test {
-// 	type FullIdentification = ();
-// 	type FullIdentificationOf = ();
-// }
-
-type Extrinsic = TestXt<Call, ()>;
-
-impl frame_system::offchain::SigningTypes for Test {
-	type Public = <Signature as Verify>::Signer;
-	type Signature = Signature;
-}
-
-impl<LocalCall> frame_system::offchain::SendTransactionTypes<LocalCall> for Test
-where
-	Call: From<LocalCall>,
-{
-	type OverarchingCall = Call;
-	type Extrinsic = Extrinsic;
-}
-
-impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Test
-where
-	Call: From<LocalCall>,
-{
-	fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
-		call: Call,
-		_public: <Signature as Verify>::Signer,
-		_account: AccountId,
-		nonce: u64,
-	) -> Option<(Call, <Extrinsic as ExtrinsicT>::SignaturePayload)> {
-		Some((call, (nonce, ())))
-	}
-}
-
-pub struct OctopusAppCrypto;
-
-impl frame_system::offchain::AppCrypto<<Signature as Verify>::Signer, Signature> for OctopusAppCrypto {
-	type RuntimeAppPublic = crypto::AuthorityId;
-	type GenericSignature = sp_core::sr25519::Signature;
-	type GenericPublic = sp_core::sr25519::Public;
-}
-
-parameter_types! {
-	pub const AppchainId: ChainId = 0;
-	pub const Motherchain: MotherchainType = MotherchainType::NEAR;
-	pub const GracePeriod: u64 = 5;
-	pub const UnsignedPriority: u64 = 1 << 20;
-}
-
-impl Config for Test {
-	type Event = Event;
-	type AppCrypto = OctopusAppCrypto;
-	type Call = Call;
-	type AppchainId = AppchainId;
-	type Motherchain = Motherchain;
-	const RELAY_CONTRACT_NAME: &'static [u8] = b"octopus.testnet";
-	type GracePeriod = GracePeriod;
-	type UnsignedPriority = UnsignedPriority;
-}
+use sp_runtime::RuntimeAppPublic;
+ use std::sync::Arc;
 
 fn expected_val_set() -> Option<ValidatorSet<AccountId>> {
 	let id = hex::decode("d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d")
@@ -367,7 +211,7 @@ fn should_submit_unsigned_transaction_on_chain() {
 		let tx = pool_state.write().transactions.pop().unwrap();
 		let tx = Extrinsic::decode(&mut &*tx).unwrap();
 		assert_eq!(tx.signature, None);
-		if let Call::OctopusAppchain(crate::Call::submit_validator_set(body, signature)) = tx.call {
+		if let mock::Call::OctopusAppchain(crate::Call::submit_validator_set(body, signature)) = tx.call {
 			assert_eq!(body, payload);
 
 			let signature_valid = <ValidatorSetPayload<
