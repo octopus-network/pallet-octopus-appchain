@@ -1,6 +1,6 @@
 ## Appchain Guide
 
-In this tutorial we will learn and practice how to connect Appchain to the Octopus network.
+In this tutorial, we will learn and practice how to connect Appchain to the Octopus network.
 
 * Register Appchain
 * Integrate Appchain
@@ -39,13 +39,13 @@ Log in to Octopus [testnet](https://testnet.oct.network/) with the Near testnet 
 
 Before we even get started, let's lay out what we are going to do over the course of this tutorial. We will:
 
-* Update Appchain runtime codes
+* Update Appchain runtime code
 * Generate and update Chain Spec file
 * Provide the link and hash of Chain Spec file
 
-#### Update Appchain runtime codes
+#### Update Appchain runtime code
 
-The first step to integrate Appchain is to introduce the pallet `pallet-octopus-appchain` and update some codes of the substrate based blockchain.
+The first step to integrate Appchain is to introduce the pallet `pallet-octopus-appchain` and update some code of the substrate-based blockchain.
 
 1. Simply to add the following dependencies to the runtime's `Cargo.toml` file:
 
@@ -87,7 +87,7 @@ impl pallet_octopus_appchain::Config for Runtime {
 }
 ```
 
-Change the value of constant **AppchainId** with your Appchain ID, and you can double check it from the Octopus [testnet](https://testnet.oct.network/).
+Change the value of constant **AppchainId** with your Appchain ID, and you can double-check it from the Octopus [testnet](https://testnet.oct.network/).
 
 ```Rust
 pub const AppchainId: pallet_octopus_appchain::ChainId = 3;
@@ -105,7 +105,7 @@ const RELAY_CONTRACT_NAME: &'static [u8] = b"dev-1618284355026-5339538";
 OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Config<T>, Event<T>, ValidateUnsigned},
 ```
 
-You can see the last commit of [Barnacle](https://github.com/octopus-network/barnacle) for a whole changes.
+You can see the last commit of [Barnacle](https://github.com/octopus-network/barnacle) for whole changes.
 
 #### Generate and update Chain Spec file
 
@@ -117,7 +117,7 @@ You can see the last commit of [Barnacle](https://github.com/octopus-network/bar
 
     More details [Create a Custom Chain Spec](https://substrate.dev/docs/en/tutorials/start-a-private-network/customspec)
 
-2. Then, you can download the the chainspec snippet from the Octopus [testnet](https://testnet.oct.network/).
+2. Then, you can download the chainspec snippet from the Octopus [testnet](https://testnet.oct.network/).
 
 3. For your chainspec file, update the below fields with the related content from the chainspec snippet.
 
