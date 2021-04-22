@@ -14,7 +14,7 @@ An appchain can rent security from motherchain on demand.
 
 Octopus Network is a host for Web3.0 applications in the form of independent blockchains, aka appchains. Octopus Network provides leased security, interoperability, infrastructure and many other useful and affordable services to appchains.
 
-![Octopus Network Image](https://github.com/octopus-network/pallet-octopus-appchain/blob/master/docs/networkdiagram.png)
+![Octopus Network Architecture](https://github.com/octopus-network/pallet-octopus-appchain/blob/master/docs/architecture.jpg)
 
 ### Relay
 
