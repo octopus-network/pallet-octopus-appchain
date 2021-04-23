@@ -142,4 +142,4 @@ To start the network, we need the chainspec file. You can upload it to your netw
 
 Finally, to start the network, you can contact the Octopus team on the [Discord](https://discord.gg/6GTJBkZA9Q) #testnet channel of the Octopus network. 
 
-### 🎉🎉🎉 Yay Congratulations! Excited to see what we could build together using this exciting technology! If you have anymore questions, please feel free to chat with us on Discord! We will reply to every message from you 🤟####
+### 🎉🎉🎉 Yay Congratulations! Excited to see what we could build together using this exciting technology! If you have anymore questions, please feel free to chat with us on Discord! We will reply to every message from you 🤟
