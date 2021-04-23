@@ -1,53 +1,51 @@
 ## Appchain Guide
 
-In this tutorial, we will learn and practice how to connect Appchain to the Octopus network.
+In this tutorial, we will learn and practice how to connect your Appchain to the Octopus network.
 
-* Register Appchain
-* Integrate Appchain
+* Register your Appchain
+* Integrate your Appchain
 
-### Register Appchain
+### Register your Appchain
 
 **What you will be doing**
 
-Before we even get started, let's lay out what we are going to do over the course of this tutorial. We will:
-
-* Create a Near account
+* Create a NEAR account
 * Request OCT tokens
-* Register Appchain
+* Register your Appchain
 
 #### Create a Near Account
 
-We know that Octopus is an Appchains network running on the Near network. Therefore, you firstly need to have an account on the Near network before you can connect Appchain to the Octopus network.
+Octopus network is a network of Appchains running on the NEAR blockchain network. Therefore, you need to have an account on the NEAR network before you can connect your Appchain to the Octopus network.
 
-The easiest way to create an account on NEAR is to use the NEAR wallet. Here we create a testnet account, navigate to https://wallet.testnet.near.org, and then click "Create Account", the next step, enter the desired account name.
+The easiest way to create an account on NEAR is to use the NEAR wallet. Go to https://wallet.testnet.near.org, and follow the instructions to create your account.
 
 More details [Create Near Account](https://docs.near.org/docs/develop/basics/create-account).
 
 #### Request OCT tokens
 
-This step is easy, just join the [Discord](https://discord.gg/6GTJBkZA9Q) of the Octopus network, in the *#testnet* channel, you can apply for the OCT tokens from the Octopus team.
+Join our [Discord server] https://discord.gg/6GTJBkZA9Q  
+In the *#testnet* channel, enter "apply for OCT tokens".
+Someone from our team will be in touch with you shortly.
 
-#### Register Appchain
+#### Register your Appchain
 
-From Octopus network's architecture, we know that there is a relay contract. You can send a registration transaction with Appchain information by your Near account, which would interact with the relay contract and return the Appchain Id.
+From the Octopus network's architecture, we know there is a relay contract. You can send a registration transaction with your Appchain information using your NEAR account, which would interact with the relay contract and return your ```appchain_id```
 
-Log in to Octopus [testnet](https://testnet.oct.network/) with the Near testnet account, click the **Register** button, and enter *Appchain Name, Bond Token*, and then click “Register”, once the transaction is successfully executed, you can get the ID as your **appchain_id**.
+Log in to Octopus [testnet](https://testnet.oct.network/) with your NEAR testnet account. Click the **Register** button, enter *Appchain Name, Bond Token*, then click “Register”. Once the transaction has been successfully executed, you will get the ID as your **appchain_id**.
 
-### Integrate Appchain
+### Integrate your Appchain
 
 **What you will be doing**
 
-Before we even get started, let's lay out what we are going to do over the course of this tutorial. We will:
+* Update your Appchain runtime code
+* Generate and update the **Chain Spec** file
+* Provide the link and hash of the **Chain Spec** file
 
-* Update Appchain runtime code
-* Generate and update Chain Spec file
-* Provide the link and hash of Chain Spec file
+#### Update your Appchain runtime code
 
-#### Update Appchain runtime code
+The first step to integrate your Appchain is to introduce the pallet `pallet-octopus-appchain` and update the code of the substrate-based blockchain.
 
-The first step to integrate Appchain is to introduce the pallet `pallet-octopus-appchain` and update some code of the substrate-based blockchain.
-
-1. Simply to add the following dependencies to the runtime's `Cargo.toml` file:
+1. Add the following dependencies to the runtime's `Cargo.toml` file:
 
 ```TOML
 [dependencies]
@@ -55,7 +53,7 @@ pallet-session = { default-features = false, version = '3.0.0' }
 pallet-octopus-appchain = { default-features = false, git = 'https://github.com/octopus-network/pallet-octopus-appchain.git' }
 ```
 
-and update the runtime's `std` feature to include this pallet:
+Update the runtime's `std` feature to include this pallet:
 
 ```TOML
 std = [
@@ -65,7 +63,7 @@ std = [
 ]
 ```
 
-2. And then to edit the runtime `lib.rs`, you should implement its trait like so:
+2.Edit the runtime `lib.rs`, you should implement its trait like this:
 
 ```rust
 parameter_types! {
@@ -87,13 +85,13 @@ impl pallet_octopus_appchain::Config for Runtime {
 }
 ```
 
-Change the value of constant **AppchainId** with your Appchain ID, and you can double-check it from the Octopus [testnet](https://testnet.oct.network/).
+Change the value of constant **AppchainId** with your Appchain ID, and you can find it from the Octopus [testnet](https://testnet.oct.network/).
 
 ```Rust
 pub const AppchainId: pallet_octopus_appchain::ChainId = 3;
 ```
 
-And you can get the value of **RELAY_CONTRACT_NAME** from the Octopus [testnet](https://testnet.oct.network/), e.g. Relay contract: dev-1618284355026-5339538
+You can get the value of **RELAY_CONTRACT_NAME** from the Octopus [testnet](https://testnet.oct.network/), e.g. Relay contract: dev-1618284355026-5339538
 
 ```Rust
 const RELAY_CONTRACT_NAME: &'static [u8] = b"dev-1618284355026-5339538";
@@ -105,11 +103,11 @@ const RELAY_CONTRACT_NAME: &'static [u8] = b"dev-1618284355026-5339538";
 OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Config<T>, Event<T>, ValidateUnsigned},
 ```
 
-You can see the last commit of [Barnacle](https://github.com/octopus-network/barnacle) for whole changes.
+You can see the last commit of [Barnacle](https://github.com/octopus-network/barnacle) for the entire changes.
 
-#### Generate and update Chain Spec file
+#### Generate and update the Chain Spec file
 
-1. Firstly, you need to generate your chainspec file, e.g.:
+1. First, you need to generate your chainspec file, e.g.:
 
    ```bash
    ./target/debug/node-template build-spec --disable-default-bootnode --chain local > chain-spec.json
@@ -117,9 +115,9 @@ You can see the last commit of [Barnacle](https://github.com/octopus-network/bar
 
     More details [Create a Custom Chain Spec](https://substrate.dev/docs/en/tutorials/start-a-private-network/customspec)
 
-2. Then, you can download the chainspec snippet from the Octopus [testnet](https://testnet.oct.network/).
+2. You can download the chainspec snippet from the Octopus [testnet](https://testnet.oct.network/).
 
-3. For your chainspec file, update the below fields with the related content from the chainspec snippet.
+3. For your chainspec file, update these fields with the related content from the chainspec snippet.
 
    * `palletBalance`
    * `palletSession`
@@ -140,6 +138,8 @@ You can see the last commit of [Barnacle](https://github.com/octopus-network/bar
 
 #### Provide the link and hash of Chain Spec file
 
-To start the network, we need the chainspec file, so you can uploads it to your network space, and log in to Octopus [testnet](https://testnet.oct.network/) to fill in the file URL and hash.
+To start the network, we need the chainspec file. You can upload it to your network space, and logon to Octopus [testnet](https://testnet.oct.network/) to fill in the file URL and hash.
 
 Finally, to start the network, you can contact the Octopus team on the [Discord](https://discord.gg/6GTJBkZA9Q) #testnet channel of the Octopus network. 
+
+### 🎉🎉🎉 Yay Congratulations! Excited to see what we could build together using this exciting technology! If you have anymore questions, please feel free to chat with us on Discord! We will reply to every message from you 🤟####
