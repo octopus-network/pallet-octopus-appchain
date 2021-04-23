@@ -19,7 +19,7 @@ Octopus network is a network of Appchains running on the NEAR blockchain network
 
 The easiest way to create an account on NEAR is to use the NEAR wallet. Go to https://wallet.testnet.near.org, and follow the instructions to create your account.
 
-More details [Create Near Account](https://docs.near.org/docs/develop/basics/create-account).
+More details [Create NEAR Account](https://docs.near.org/docs/develop/basics/create-account).
 
 #### Request OCT tokens
 
