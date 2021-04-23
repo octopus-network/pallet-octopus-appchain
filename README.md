@@ -6,93 +6,33 @@ This is a support component of [Octopus Network](https://oct.network/).
 
 ## Purpose
 
-With this pallet, a chain built from substrate can join octopus network as an appchain.
+With this pallet, a chain built from substrate can join octopus network as an Appchain.
 
-An appchain can rent security from motherchain on demand.
+An Appchain can rent security from motherchain on demand.
+
+## Overview of Octopus
+
+Octopus Network is a host for Web3.0 applications in the form of independent blockchains, aka Appchains. Octopus Network provides leased security, interoperability, infrastructure and many other useful and affordable services to Appchains.
+
+![Octopus Network Architecture](https://github.com/octopus-network/pallet-octopus-appchain/blob/master/docs/architecture.jpg)
+
+### Relay
+
+Octopus Relay is a set of [smart contracts](https://github.com/octopus-network/octopus-relay-contract) running on the NEAR blockchain. It provides leased security to Appchains, and make Appchains interoperable with NEAR and other Appchains.
+
+### Appchain
+
+An Appchain is a Substrate-based blockchain that is made for a specific decentralized web application. A Substrate-based blockchain could integrate the pallet [pallet-octopus-appchain](https://github.com/octopus-network/pallet-octopus-appchain) as an Octopus Appchain, and  [join the Octopus Network](https://github.com/octopus-network/pallet-octopus-appchain/blob/master/docs/Appchain_Guide.md) get flexible and affordable leased security, powerful out-of-the-box interoperability, and many useful infrastructures. 
+
+### Validator
+
+Octopus Validators provide security to a Appchain by staking OCT tokens on Octopus Relay and [running validator]() nodes for this Appchain.
+
+All validator nodes for one Appchain will form a quorum to reach consensus on block production. They will be rewarded by Appchain native token issuing, and malicious actors will be slashed with the staked OCT. By this mechanism, an Appchain’s security is economically ensured by OCT staking on the Octopus Relay.
 
 ## Appchain Guide
 
-### Join octopus network 
-
-1. Register a Near account. You can refer to the [document](https://docs.near.org/docs/develop/basics/create-account) to complete the registration of the Near test network account;
-
-2. Require OCT tokens. You need to join the [Discord](https://discord.gg/6GTJBkZA9Q) of the Octopus, and apply for the OCT tokens for testing in the **#testnet** channel;
-
-3. Register Appchain. Log in to Octopus [testnet](https://testnet.oct.network/) with the Near account registered in step 1, click the register button, and input the *Appchain Name, Runtime URL, Runtime Hash, Bond Token*, and then complete the registration. After the transaction is successfully executed, save the generated **appchain_id**;
-
-4. Integrate **pallet-octopus-appchain**. You can refer to the below **Integration** section to complete Appchain integration;
-
-5. Generate the chainspec file of Appchain. Refer to this [document](https://substrate.dev/docs/en/tutorials/start-a-private-network/customspec), fill in appchain_id (generated in step 3) and relay contract name (dev-1616825757804-8762183), generate chainspec and check the data settings in it;
-
-6. Upload the chainspec file of Appchain. After uploading, contact the Octopus team to start the network on the [Discord](https://discord.gg/6GTJBkZA9Q) **#testnet** channel of the Octopus.
-
-### Integration
-
-#### Edit Runtime `Cargo.toml`
-
-To add this pallet to your runtime, simply include the following to your runtime's `Cargo.toml` file:
-
-```TOML
-[dependencies]
-pallet-session = { default-features = false, version = '3.0.0' }
-pallet-octopus-appchain = { default-features = false, git = 'https://github.com/octopus-network/pallet-octopus-appchain.git' }
-```
-
-and update your runtime's `std` feature to include this pallet:
-
-```TOML
-std = [
-    # --snip--
-    'pallet-session/std',
-    'pallet-octopus-appchain/std',
-]
-```
-
-**Traits**
-
-This pallet depend on [`CreateSignedTransaction`](https://docs.rs/frame-system/3.0.0/frame_system/offchain/trait.CreateSignedTransaction.html).
-
-**Pallets**
-
-This pallet depend on [pallet_session](https://docs.rs/pallet-session/3.0.0/pallet_session/).
-
-
-#### Edit Runtime `lib.rs`
-
-You should implement it's trait like so:
-
-```rust
-parameter_types! {
-	pub const AppchainId: pallet_octopus_appchain::ChainId = 0;
-	pub const Motherchain: pallet_octopus_appchain::MotherchainType = pallet_octopus_appchain::MotherchainType::NEAR;
-	pub const GracePeriod: u32 = 5;
-	pub const UnsignedPriority: u64 = 1 << 20;
-}
-
-impl pallet_octopus_appchain::Config for Runtime {
-	type Event = Event;
-	type AuthorityId = pallet_octopus_appchain::crypto::OctopusAuthId;
-	type Call = Call;
-	type AppchainId = AppchainId;
-	type Motherchain = Motherchain;
-	const RELAY_CONTRACT_NAME: &'static [u8] = b"dev-1616239154529-4812993";
-	type GracePeriod = GracePeriod;
-	type UnsignedPriority = UnsignedPriority;
-}
-```
-
-and include it in your `construct_runtime!` macro:
-
-```rust
-OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Config<T>, Event<T>, ValidateUnsigned},
-```
-
-#### Genesis Configuration
-
-See the last commit of [Barnacle](https://github.com/octopus-network/barnacle) for genesis configuration and other settings.
-
-We will explain these configurations in detail later.
-
+In this [tutorial](https://github.com/octopus-network/pallet-octopus-appchain/blob/master/docs/Appchain_Guide.md) we will learn and practice how to connect an Appchain to the Octopus network.
 
 ## Reference Docs
 
