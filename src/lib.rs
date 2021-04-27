@@ -176,6 +176,8 @@ decl_error! {
 		WrongSequenceNumber,
 		/// Must be a validator.
 		NotValidator,
+		/// Wrap val error
+		WrapValError,
 	}
 }
 
@@ -226,7 +228,8 @@ decl_module! {
 				debug::native::error!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
 				return Err(Error::<T>::NotValidator.into());
 			}
-			Self::add_validator_set(who, val.unwrap().clone(), payload.val_set);
+			let val = val.ok_or(Error::<T>::WrapValError)?.clone();
+			Self::add_validator_set(who, val, payload.val_set);
 			//
 			frame_support::debug::native::info!("🐙 after submit_validator_set");
 			let candidates = <CandidateValidatorSets<T>>::get();
@@ -404,7 +407,10 @@ impl<T: Config> Module<T> {
 		// you can find in `sp_io`. The API is trying to be similar to `reqwest`, but
 		// since we are running in a custom WASM execution environment we can't simply
 		// import the library here.
-		let args = Self::encode_args(appchain_id, seq_num).unwrap();
+		let args = Self::encode_args(appchain_id, seq_num).ok_or_else(|| {
+			debug::warn!("🐙 wrap value error");
+			http::Error::Unknown
+		})?;
 
 		let mut body = br#"
 		{
@@ -499,8 +505,16 @@ impl<T: Config> Module<T> {
 		body_str: &str,
 	) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
 		// TODO
-		let result = Self::extract_result(body_str).unwrap();
-		let result_str = sp_std::str::from_utf8(&result).unwrap();
+		let result = Self::extract_result(body_str).ok_or_else(|| {
+			debug::warn!("🐙 wrap value error");
+			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+		}).ok()?;
+
+		let result_str = sp_std::str::from_utf8(&result).map_err(|_| {
+			debug::warn!("🐙 wrap value error");
+			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+		}).ok()?;
+
 		debug::native::info!("🐙 Got result: {:?}", result_str);
 		let mut val_set: ValidatorSet<<T as frame_system::Config>::AccountId> = ValidatorSet {
 			sequence_number: 0,
@@ -544,7 +558,11 @@ impl<T: Config> Module<T> {
 													.skip(2)
 													.map(|c| *c as u8)
 													.collect::<Vec<_>>();
-												let b = hex::decode(data).unwrap();
+												let b = hex::decode(data).map_err(|_| {
+													debug::warn!("🐙 wrap value error");
+													Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+												}).ok()?;
+												// let b = hex::decode(data).ok_or(Error::<T>::WrapValError)?;
 												<T as frame_system::Config>::AccountId::decode(
 													&mut &b[..],
 												)
@@ -564,6 +582,7 @@ impl<T: Config> Module<T> {
 											_ => None,
 										});
 									if id.is_some() && weight.is_some() {
+										// id and weight can use unwrap because id and weight have been detected by is_some()
 										val_set.validators.push(Validator {
 											id: id.unwrap(),
 											weight: weight.unwrap().integer as u64,
