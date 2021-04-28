@@ -176,8 +176,6 @@ decl_error! {
 		WrongSequenceNumber,
 		/// Must be a validator.
 		NotValidator,
-		/// Wrap val error
-		WrapValError,
 	}
 }
 
@@ -228,7 +226,7 @@ decl_module! {
 				debug::native::error!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
 				return Err(Error::<T>::NotValidator.into());
 			}
-			let val = val.ok_or(Error::<T>::WrapValError)?.clone();
+			let val = val.ok_or(Error::<T>::NotValidator)?.clone();
 			Self::add_validator_set(who, val, payload.val_set);
 			//
 			frame_support::debug::native::info!("🐙 after submit_validator_set");

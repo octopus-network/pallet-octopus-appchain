@@ -21,13 +21,13 @@ package = 'parity-scale-codec'
 version = '2.0.0'
 
 [dependencies]
-frame-support = { default-features = false, version = '3.0.0' }
-frame-system = { default-features = false, version = '3.0.0' }
-pallet-session = { default-features = false, version = '3.0.0' }
-sp-core = { default-features = false, version = '3.0.0' }
-sp-io = { default-features = false, version = '3.0.0' }
-sp-runtime = { default-features = false, version = '3.0.0' }
-sp-std = { default-features = false, version = '3.0.0' }
+frame-support = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus' }
+frame-system = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus' }
+pallet-session = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus' }
+sp-core = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus' }
+sp-io = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus' }
+sp-runtime = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus'}
+sp-std = { default-features = false, version = '3.0.0', git = 'https://github.com/octopus-network/substrate.git', branch = 'octopus'}
 base64 = { default-features = false, version = '0.13', features = ['alloc'] }
 hex = { default-features = false, version = '0.4', features = ['alloc'] }
 lite-json = { default-features = false, version = '0.1' }
