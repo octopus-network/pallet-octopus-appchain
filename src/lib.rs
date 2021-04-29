@@ -406,7 +406,7 @@ impl<T: Config> Module<T> {
 		// since we are running in a custom WASM execution environment we can't simply
 		// import the library here.
 		let args = Self::encode_args(appchain_id, seq_num).ok_or_else(|| {
-			debug::warn!("🐙 wrap value error");
+			debug::warn!("🐙 Encode args error");
 			http::Error::Unknown
 		})?;
 
@@ -467,7 +467,7 @@ impl<T: Config> Module<T> {
 
 		// Create a str slice from the body.
 		let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
-			debug::warn!("🐙 No UTF8 body");
+			debug::warn!("🐙 Can't create a body slice from the body");
 			http::Error::Unknown
 		})?;
 		debug::native::info!("🐙 Got response: {:?}", body_str);
@@ -504,12 +504,12 @@ impl<T: Config> Module<T> {
 	) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
 		// TODO
 		let result = Self::extract_result(body_str).ok_or_else(|| {
-			debug::warn!("🐙 wrap value error");
+			debug::warn!("🐙 Can't extract result Vec from the body slice");
 			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 		}).ok()?;
 
 		let result_str = sp_std::str::from_utf8(&result).map_err(|_| {
-			debug::warn!("🐙 wrap value error");
+			debug::warn!("🐙 Can't create the result slice from result");
 			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 		}).ok()?;
 
@@ -557,7 +557,7 @@ impl<T: Config> Module<T> {
 													.map(|c| *c as u8)
 													.collect::<Vec<_>>();
 												let b = hex::decode(data).map_err(|_| {
-													debug::warn!("🐙 wrap value error");
+													debug::warn!("🐙 Decode Data(vec<u8>) error");
 													Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 												}).ok()?;
 												// let b = hex::decode(data).ok_or(Error::<T>::WrapValError)?;
@@ -581,9 +581,18 @@ impl<T: Config> Module<T> {
 										});
 									if id.is_some() && weight.is_some() {
 										// id and weight can use unwrap because id and weight have been detected by is_some()
+										let id = id.ok_or_else(|| {
+											debug::warn!("🐙 Get AccountId Error");
+											Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+										}).clone()?;
+										let weight = weight.ok_or_else(|| {
+											debug::warn!("🐙 Get Weight Error");
+											Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+										}).clone()?.integer as u64;
+
 										val_set.validators.push(Validator {
-											id: id.unwrap(),
-											weight: weight.unwrap().integer as u64,
+											id: id,
+											weight: weight,
 										});
 									}
 								}
