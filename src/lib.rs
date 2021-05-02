@@ -226,7 +226,7 @@ decl_module! {
 				debug::native::error!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
 				return Err(Error::<T>::NotValidator.into());
 			}
-			let val = val.ok_or(Error::<T>::NotValidator)?.clone();
+			let val = val.expect("Validator is valid; qed").clone();
 			Self::add_validator_set(who, val, payload.val_set);
 			//
 			frame_support::debug::native::info!("🐙 after submit_validator_set");
@@ -467,7 +467,7 @@ impl<T: Config> Module<T> {
 
 		// Create a str slice from the body.
 		let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
-			debug::warn!("🐙 Can't create a body slice from the body");
+			debug::warn!("🐙 No UTF8 body");
 			http::Error::Unknown
 		})?;
 		debug::native::info!("🐙 Got response: {:?}", body_str);
@@ -504,12 +504,12 @@ impl<T: Config> Module<T> {
 	) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
 		// TODO
 		let result = Self::extract_result(body_str).ok_or_else(|| {
-			debug::warn!("🐙 Can't extract result Vec from the body slice");
+			debug::warn!("🐙 Can't extract result from body");
 			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 		}).ok()?;
 
 		let result_str = sp_std::str::from_utf8(&result).map_err(|_| {
-			debug::warn!("🐙 Can't create the result slice from result");
+			debug::warn!("🐙 No UTF8 result");
 			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 		}).ok()?;
 
@@ -557,10 +557,9 @@ impl<T: Config> Module<T> {
 													.map(|c| *c as u8)
 													.collect::<Vec<_>>();
 												let b = hex::decode(data).map_err(|_| {
-													debug::warn!("🐙 Decode Data(vec<u8>) error");
+													debug::warn!("🐙 Not a valid hex string");
 													Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 												}).ok()?;
-												// let b = hex::decode(data).ok_or(Error::<T>::WrapValError)?;
 												<T as frame_system::Config>::AccountId::decode(
 													&mut &b[..],
 												)
@@ -580,16 +579,8 @@ impl<T: Config> Module<T> {
 											_ => None,
 										});
 									if id.is_some() && weight.is_some() {
-										// id and weight can use unwrap because id and weight have been detected by is_some()
-										let id = id.ok_or_else(|| {
-											debug::warn!("🐙 Get AccountId Error");
-											Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-										}).clone()?;
-										let weight = weight.ok_or_else(|| {
-											debug::warn!("🐙 Get Weight Error");
-											Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-										}).clone()?.integer as u64;
-
+										let id = id.expect("id is valid; qed");
+										let weight = weight.expect("weight is valid; qed").integer as u64;
 										val_set.validators.push(Validator {
 											id: id,
 											weight: weight,
