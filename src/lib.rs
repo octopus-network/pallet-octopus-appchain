@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 
 use frame_support::{
-	debug, decl_error, decl_event, decl_module, decl_storage, dispatch::DispatchResult, ensure,
+	decl_error, decl_event, decl_module, decl_storage, dispatch::DispatchResult, ensure,
 	traits::{Get, OneSessionHandler},
 };
 use frame_system::{
@@ -100,8 +100,6 @@ pub trait Config: CreateSignedTransaction<Call<Self>> + pallet_session::Config {
 	/// multiple pallets send unsigned transactions.
 	type UnsignedPriority: Get<TransactionPriority>;
 }
-
-pub(crate) const LOG_TARGET: &'static str = "octopus";
 
 /// Validator of appchain.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
@@ -199,15 +197,13 @@ decl_module! {
 			let cur_val_set = <CurrentValidatorSet<T>>::get().ok_or(Error::<T>::NoCurrentValidatorSet)?;
 			let who = payload.public.clone().into_account();
 			//
-			frame_support::debug::native::info!(
-				target: LOG_TARGET,
+			frame_support::runtime_print!(
 				"️️️🐙 current_validator_set: {:#?},\nnext_validator_set: {:#?},\nwho: {:?}",
 				cur_val_set, payload.val_set, who
 			);
 			let candidates = <CandidateValidatorSets<T>>::get();
 			for i in 0..candidates.len() {
-				frame_support::debug::native::info!(
-					target: LOG_TARGET,
+				frame_support::runtime_print!(
 					"🐙 Candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
 					i, candidates.get(i), <Voters<T>>::get(i as u32)
 				);
@@ -219,21 +215,20 @@ decl_module! {
 				.iter()
 				.find(|v| {
 					let id = <pallet_session::Module<T>>::key_owner(KEY_TYPE, &payload.public.clone().into_account().encode());
-					frame_support::debug::native::info!(target: LOG_TARGET, "🐙 check {:#?} == {:#?}", v.id, id);
+					frame_support::runtime_print!("🐙 check {:#?} == {:#?}", v.id, id);
 					<T as pallet_session::Config>::ValidatorIdOf::convert(v.id.clone()) == id
 				});
 			if val.is_none() {
-				debug::native::error!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
+				frame_support::runtime_print!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
 				return Err(Error::<T>::NotValidator.into());
 			}
 			let val = val.expect("Validator is valid; qed").clone();
 			Self::add_validator_set(who, val, payload.val_set);
 			//
-			frame_support::debug::native::info!("🐙 after submit_validator_set");
+			frame_support::runtime_print!("🐙 after submit_validator_set");
 			let candidates = <CandidateValidatorSets<T>>::get();
 			for i in 0..candidates.len() {
-				frame_support::debug::native::info!(
-					target: LOG_TARGET,
+				frame_support::runtime_print!(
 					"🐙 candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
 					i, candidates.get(i), <Voters<T>>::get(i as u32)
 				);
@@ -254,8 +249,8 @@ decl_module! {
 		/// so the code should be able to handle that.
 		/// You can use `Local Storage` API to coordinate runs of the worker.
 		fn offchain_worker(block_number: T::BlockNumber) {
-			let parent_hash = <system::Module<T>>::block_hash(block_number - 1u32.into());
-			debug::native::info!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+			let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
+			frame_support::runtime_print!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
 			if !Self::should_send(block_number) {
 				return;
@@ -265,13 +260,13 @@ decl_module! {
 			if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
 				next_seq_num = cur_val_set.sequence_number + 1;
 			} else {
-				debug::native::error!("🐙 CurrentValidatorSet must be initialized.");
+				frame_support::runtime_print!("🐙 CurrentValidatorSet must be initialized.");
 				return;
 			}
-			debug::native::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
+			frame_support::runtime_print!("🐙 Next validator set sequenc number: {}", next_seq_num);
 
 			if let Err(e) = Self::fetch_and_update_validator_set(block_number, next_seq_num) {
-				debug::native::error!("🐙 Error: {}", e);
+				frame_support::runtime_print!("🐙 Error: {}", e);
 			}
 		}
 	}
@@ -361,7 +356,7 @@ impl<T: Config> Module<T> {
 		block_number: T::BlockNumber,
 		next_seq_num: u32,
 	) -> Result<(), &'static str> {
-		debug::native::info!("🐙 in fetch_and_update_validator_set");
+		frame_support::runtime_print!("🐙 in fetch_and_update_validator_set");
 
 		// Make an external HTTP request to fetch the current validator set.
 		// Note this call will block until response is received.
@@ -371,7 +366,7 @@ impl<T: Config> Module<T> {
 			next_seq_num,
 		)
 		.map_err(|_| "Failed to fetch validator set")?;
-		debug::native::info!("🐙 new validator set: {:#?}", next_val_set);
+		frame_support::runtime_print!("🐙 new validator set: {:#?}", next_val_set);
 
 		// -- Sign using any account
 		let (_, result) = Signer::<T, T::AppCrypto>::any_account()
@@ -406,7 +401,7 @@ impl<T: Config> Module<T> {
 		// since we are running in a custom WASM execution environment we can't simply
 		// import the library here.
 		let args = Self::encode_args(appchain_id, seq_num).ok_or_else(|| {
-			debug::warn!("🐙 Encode args error");
+			frame_support::runtime_print!("🐙 Encode args error");
 			http::Error::Unknown
 		})?;
 
@@ -456,7 +451,7 @@ impl<T: Config> Module<T> {
 			.map_err(|_| http::Error::DeadlineReached)??;
 		// Let's check the status code before we proceed to reading the response.
 		if response.code != 200 {
-			debug::warn!("🐙 Unexpected status code: {}", response.code);
+			frame_support::runtime_print!("🐙 Unexpected status code: {}", response.code);
 			return Err(http::Error::Unknown);
 		}
 
@@ -467,15 +462,15 @@ impl<T: Config> Module<T> {
 
 		// Create a str slice from the body.
 		let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
-			debug::warn!("🐙 No UTF8 body");
+			frame_support::runtime_print!("🐙 No UTF8 body");
 			http::Error::Unknown
 		})?;
-		debug::native::info!("🐙 Got response: {:?}", body_str);
+		frame_support::runtime_print!("🐙 Got response: {:?}", body_str);
 
 		let val_set = match Self::parse_validator_set(body_str) {
 			Some(val_set) => Ok(val_set),
 			None => {
-				debug::warn!(
+				frame_support::runtime_print!(
 					"🐙 Unable to extract validator set from the response: {:?}",
 					body_str
 				);
@@ -483,7 +478,7 @@ impl<T: Config> Module<T> {
 			}
 		}?;
 
-		debug::warn!("🐙 Got validator set: {:?}", val_set);
+		frame_support::runtime_print!("🐙 Got validator set: {:?}", val_set);
 
 		Ok(val_set)
 	}
@@ -504,16 +499,16 @@ impl<T: Config> Module<T> {
 	) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
 		// TODO
 		let result = Self::extract_result(body_str).ok_or_else(|| {
-			debug::warn!("🐙 Can't extract result from body");
+			frame_support::runtime_print!("🐙 Can't extract result from body");
 			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 		}).ok()?;
 
 		let result_str = sp_std::str::from_utf8(&result).map_err(|_| {
-			debug::warn!("🐙 No UTF8 result");
+			frame_support::runtime_print!("🐙 No UTF8 result");
 			Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 		}).ok()?;
 
-		debug::native::info!("🐙 Got result: {:?}", result_str);
+		frame_support::runtime_print!("🐙 Got result: {:?}", result_str);
 		let mut val_set: ValidatorSet<<T as frame_system::Config>::AccountId> = ValidatorSet {
 			sequence_number: 0,
 			validators: vec![],
@@ -557,7 +552,7 @@ impl<T: Config> Module<T> {
 													.map(|c| *c as u8)
 													.collect::<Vec<_>>();
 												let b = hex::decode(data).map_err(|_| {
-													debug::warn!("🐙 Not a valid hex string");
+													frame_support::runtime_print!("🐙 Not a valid hex string");
 													Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
 												}).ok()?;
 												<T as frame_system::Config>::AccountId::decode(
@@ -614,7 +609,7 @@ impl<T: Config> Module<T> {
 						JsonValue::String(s) => Some(s),
 						_ => None,
 					})?;
-				debug::native::info!("🐙 version: {:?}", version);
+				frame_support::runtime_print!("🐙 version: {:?}", version);
 				let id = obj
 					.clone()
 					.into_iter()
@@ -626,7 +621,7 @@ impl<T: Config> Module<T> {
 						JsonValue::String(s) => Some(s),
 						_ => None,
 					})?;
-				debug::native::info!("🐙 id: {:?}", id);
+				frame_support::runtime_print!("🐙 id: {:?}", id);
 				obj.into_iter()
 					.find(|(k, _)| {
 						let mut result = "result".chars();
@@ -667,7 +662,7 @@ impl<T: Config> Module<T> {
 		val: Validator<<T as frame_system::Config>::AccountId>,
 		new_val_set: ValidatorSet<<T as frame_system::Config>::AccountId>,
 	) {
-		debug::native::info!("🐙 Adding to the voters: {:#?}", new_val_set);
+		frame_support::runtime_print!("🐙 Adding to the voters: {:#?}", new_val_set);
 		let index = 0;
 		<CandidateValidatorSets<T>>::mutate(|val_sets| {
 			// TODO
@@ -680,7 +675,7 @@ impl<T: Config> Module<T> {
 			let exist = vals.iter().find(|v| v.id == val.id);
 			match exist {
 				Some(id) => {
-					debug::native::info!("🐙 duplicated ocw tx: {:?}", id);
+					frame_support::runtime_print!("🐙 duplicated ocw tx: {:?}", id);
 				}
 				None => vals.push(val),
 			}
@@ -695,10 +690,9 @@ impl<T: Config> Module<T> {
 		account_id: <T as frame_system::Config>::AccountId,
 	) -> TransactionValidity {
 		// Let's make sure to reject transactions from the future.
-		let current_block = <system::Module<T>>::block_number();
+		let current_block = <system::Pallet<T>>::block_number();
 		if &current_block < block_number {
-			frame_support::debug::native::info!(
-				target: LOG_TARGET,
+			frame_support::runtime_print!(
 				"🐙 InvalidTransaction => current_block: {:?}, block_number: {:?}",
 				current_block,
 				block_number
@@ -760,23 +754,20 @@ pub type SessionIndex = u32;
 
 impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 	fn new_session(new_index: SessionIndex) -> Option<Vec<T::AccountId>> {
-		frame_support::debug::native::info!(
-			target: LOG_TARGET,
-			"🐙 [{}] planning new_session({})",
-			<frame_system::Module<T>>::block_number(),
+		frame_support::runtime_print!(
+			"🐙 [{:?}] planning new_session({})",
+			<frame_system::Pallet<T>>::block_number(),
 			new_index
 		);
 		if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
 			//
-			frame_support::debug::native::info!(
-				target: LOG_TARGET,
+			frame_support::runtime_print!(
 				"🐙 current_validator_set: {:#?}",
 				cur_val_set
 			);
 			let candidates = <CandidateValidatorSets<T>>::get();
 			for i in 0..candidates.len() {
-				frame_support::debug::native::info!(
-					target: LOG_TARGET,
+				frame_support::runtime_print!(
 					"🐙 candidate_index: {:?},\ncandidate: {:#?},\nvoters: {:#?}",
 					i,
 					candidates.get(i),
@@ -789,7 +780,7 @@ impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 			let next_val_set = <Voters<T>>::iter()
 				.find(|(_k, v)| v.iter().map(|x| x.weight).sum::<u64>() == total_weight)
 				.map(|(index, _v)| {
-					debug::native::info!("🐙 total_weight: {}, index: {}", total_weight, index);
+					frame_support::runtime_print!("🐙 total_weight: {}, index: {}", total_weight, index);
 					<CandidateValidatorSets<T>>::get()[index as usize].clone()
 				});
 			match next_val_set {
@@ -801,7 +792,7 @@ impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 						<Voters<T>>::remove(i as u32);
 					}
 					<CandidateValidatorSets<T>>::kill();
-					debug::native::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
+					frame_support::runtime_print!("🐙 validator set changed to: {:#?}", new_val_set.clone());
 					Some(
 						new_val_set
 							.validators
@@ -811,7 +802,7 @@ impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 					)
 				}
 				None => {
-					debug::native::info!("🐙 validator set has't changed");
+					frame_support::runtime_print!("🐙 validator set has't changed");
 					None
 				}
 			}
@@ -821,19 +812,17 @@ impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 	}
 
 	fn start_session(start_index: SessionIndex) {
-		frame_support::debug::native::info!(
-			target: LOG_TARGET,
-			"🐙 [{}] starting start_session({})",
-			<frame_system::Module<T>>::block_number(),
+		frame_support::runtime_print!(
+			"🐙 [{:?}] starting start_session({})",
+			<frame_system::Pallet<T>>::block_number(),
 			start_index
 		);
 	}
 
 	fn end_session(end_index: SessionIndex) {
-		frame_support::debug::native::info!(
-			target: LOG_TARGET,
-			"🐙 [{}] ending end_session({})",
-			<frame_system::Module<T>>::block_number(),
+		frame_support::runtime_print!(
+			"🐙 [{:?}] ending end_session({})",
+			<frame_system::Pallet<T>>::block_number(),
 			end_index
 		);
 	}
