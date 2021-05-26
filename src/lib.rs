@@ -249,6 +249,11 @@ decl_module! {
 		/// so the code should be able to handle that.
 		/// You can use `Local Storage` API to coordinate runs of the worker.
 		fn offchain_worker(block_number: T::BlockNumber) {
+			let appchain_id = T::AppchainId::get();
+			if appchain_id == 0 {
+				// detach appchain from motherchain when appchain_id == 0
+				return;
+			}
 			let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
 			log::info!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
