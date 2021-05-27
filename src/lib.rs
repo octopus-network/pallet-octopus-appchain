@@ -29,6 +29,9 @@ use sp_std::{prelude::*, vec::Vec};
 
 use codec::{Decode, Encode};
 use lite_json::json::JsonValue;
+use frame_support::{transactional, traits::tokens::fungibles};
+use frame_system::{ensure_root, ensure_signed};
+use sp_runtime::traits::StaticLookup;
 
 #[cfg(test)]
 mod mock;
@@ -99,6 +102,8 @@ pub trait Config: CreateSignedTransaction<Call<Self>> + pallet_session::Config {
 	/// This is exposed so that it can be tuned for particular runtime, when
 	/// multiple pallets send unsigned transactions.
 	type UnsignedPriority: Get<TransactionPriority>;
+
+	type Assets: fungibles::Mutate<<Self as frame_system::Config>::AccountId>;
 }
 
 /// Validator of appchain.
@@ -162,6 +167,9 @@ decl_event!(
 		/// Event generated when a new voter votes on a validator set.
 		/// \[validator_set, voter\]
 		NewVoterFor(ValidatorSet<AccountId>, AccountId),
+		// TODO
+		Minted(u8, Vec<u8>, AccountId, u128),
+		Burned(u8, AccountId, Vec<u8>, u128),
 	}
 );
 
@@ -234,6 +242,43 @@ decl_module! {
 				);
 			}
 			//
+
+			Ok(())
+		}
+
+
+		// cross chain transfer
+		#[weight = 0]
+		#[transactional]
+		pub fn mint(
+			origin,
+			asset_id: <T::Assets as fungibles::Inspect<T::AccountId>>::AssetId,
+			sender_id: Vec<u8>,
+			receiver: <T::Lookup as StaticLookup>::Source,
+			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance
+		) -> DispatchResult {
+			// TODO
+			ensure_root(origin)?;
+			let receiver = T::Lookup::lookup(receiver)?;
+			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
+			// TODO
+			Self::deposit_event(RawEvent::Minted(0, sender_id, receiver, 41));
+
+			Ok(())
+		}
+
+		#[weight = 0]
+		#[transactional]
+		pub fn burn(
+			origin,
+			asset_id: <T::Assets as fungibles::Inspect<T::AccountId>>::AssetId,
+			receiver_id: Vec<u8>,
+			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance
+		) -> DispatchResult {
+			let sender = ensure_signed(origin)?;
+			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
+			// TODO
+			Self::deposit_event(RawEvent::Burned(0, sender, receiver_id, 41));
 
 			Ok(())
 		}
