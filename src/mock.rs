@@ -5,6 +5,7 @@ use sp_runtime::{
 	traits::{BlakeTwo256, IdentityLookup}, testing::Header,
 };
 use frame_system as system;
+
 use sp_runtime::{
 	testing::{TestXt, UintAuthorityId},
 	traits::{ConvertInto, Extrinsic as ExtrinsicT, IdentifyAccount, OpaqueKeys, Verify},
@@ -23,9 +24,9 @@ frame_support::construct_runtime!(
 		NodeBlock = Block,
 		UncheckedExtrinsic = UncheckedExtrinsic,
 	{
-		System: frame_system::{Module, Call, Config, Storage, Event<T>},
-		Session: pallet_session::{Module, Call, Storage, Event, Config<T>},
-		OctopusAppchain: pallet_octopus_appchain::{Module, Call, Storage, Event<T>, ValidateUnsigned},
+		System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
+		Session: pallet_session::{Pallet, Call, Storage, Event, Config<T>},
+		OctopusAppchain: pallet_octopus_appchain::{Pallet, Call, Storage, Event<T>, ValidateUnsigned},
 	}
 );
 
@@ -48,7 +49,7 @@ impl system::Config for Test {
 	type BlockNumber = u64;
 	type Hash = H256;
 	type Hashing = BlakeTwo256;
-	type AccountId = AccountId;
+	type AccountId = u64;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Header = Header;
 	type Event = Event;
@@ -60,6 +61,7 @@ impl system::Config for Test {
 	type OnKilledAccount = ();
 	type SystemWeightInfo = ();
 	type SS58Prefix = SS58Prefix;
+	type OnSetCode = ();
 }
 
 pub struct TestSessionHandler;

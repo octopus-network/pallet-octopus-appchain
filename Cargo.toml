@@ -1,56 +1,56 @@
 [package]
 authors = ['Octopus Network <hi@oct.network>']
-description = 'FRAME pallet for joining the octopus network as an appchain.'
 edition = '2018'
-homepage = 'https://oct.network'
-license = 'Apache-2.0'
 name = 'pallet-octopus-appchain'
-repository = 'https://github.com/octopus-network/pallet-octopus-appchain.git'
-version = '3.0.0-pre.0'
-documentation = 'https://docs.rs/pallet-octopus-appchain'
-readme = 'README.md'
+version = "3.0.0-pre.0"
+license = "Apache-2.0"
+homepage = "https://oct.network"
+repository = "https://github.com/octopus-network/pallet-octopus-appchain.git"
+description = "FRAME pallet for joining the octopus network as an appchain."
+readme = "README.md"
+documentation = "https://docs.rs/pallet-octopus-appchain"
 
 [package.metadata.docs.rs]
-targets = ['x86_64-unknown-linux-gnu']
-
-# alias "parity-scale-code" to "codec"
-[dependencies.codec]
-default-features = false
-features = ['derive']
-package = 'parity-scale-codec'
-version = '2.0.0'
+targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-log = { version = "0.4.0", default-features = false }
-frame-support = { default-features = false, version = '3.0.0' }
-frame-system = { default-features = false, version = '3.0.0' }
-pallet-session = { default-features = false, version = '3.0.0' }
-sp-core = { default-features = false, version = '3.0.0' }
-sp-io = { default-features = false, version = '3.0.0' }
-sp-runtime = { default-features = false, version = '3.0.0' }
-sp-std = { default-features = false, version = '3.0.0' }
 base64 = { default-features = false, version = '0.13', features = ['alloc'] }
+codec = { package = "parity-scale-codec", version = "2.0.0", default-features = false, features = ["derive"] }
 hex = { default-features = false, version = '0.4', features = ['alloc'] }
 lite-json = { default-features = false, version = '0.1' }
-serde = { optional = true, version = '1.0.119' }
+log = { version = "0.4.0", default-features = false }
+
+frame-benchmarking = { default-features = false,  version = "3.1.0",  path = "../../../../frame/benchmarking", optional = true }
+frame-support = { default-features = false, version = "3.0.0", path = "../../../../frame/support" }
+frame-system = { default-features = false,  version = "3.0.0",  path = "../../../../frame/system" }
+pallet-session = { default-features = false, version = '3.0.0', path = "../../../../frame/session" }
+sp-core = { default-features = false, version = "3.0.0", path = "../../../../primitives/core" }
+sp-io = { default-features = false, version = "3.0.0", path = "../../../../primitives/io" }
+sp-runtime = { default-features = false, version = "3.0.0", path = "../../../../primitives/runtime" }
+sp-std = { default-features = false, version = "3.0.0", path = "../../../../primitives/std" }
 
 [dev-dependencies]
+serde = { version = "1.0.119" }
+
 sp-keystore = { default-features = false, version = '0.9.0' }
 
 [features]
 default = ['std']
 std = [
-    'log/std',
-    'codec/std',
-    'frame-support/std',
-    'frame-system/std',
-    'pallet-session/std',
-    'sp-core/std',
-    'sp-io/std',
-    'sp-runtime/std',
-    'sp-std/std',
-    'base64/std',
-    'hex/std',
-    'lite-json/std',
-    'serde',
+	'base64/std',
+	'codec/std',
+	'hex/std',
+	'lite-json/std',
+	'log/std',
+	'frame-benchmarking/std',
+	'frame-support/std',
+	'frame-system/std',
+	'pallet-session/std',
+	'sp-core/std',
+	'sp-io/std',
+	'sp-runtime/std',
+	'sp-std/std',
 ]
+
+runtime-benchmarks = ["frame-benchmarking"]
+try-runtime = ["frame-support/try-runtime"]
