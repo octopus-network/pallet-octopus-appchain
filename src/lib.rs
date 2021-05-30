@@ -48,9 +48,7 @@ pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"octo");
 /// the types with this pallet-specific identifier.
 pub mod crypto {
 	use super::KEY_TYPE;
-	use sp_runtime::{
-		app_crypto::{app_crypto, sr25519},
-	};
+	use sp_runtime::app_crypto::{app_crypto, sr25519};
 	app_crypto!(sr25519, KEY_TYPE);
 
 	pub type AuthorityId = Public;
@@ -93,13 +91,15 @@ impl<T: SigningTypes> SignedPayload<T>
 
 #[frame_support::pallet]
 pub mod pallet {
+	use super::*;
 	use frame_support::pallet_prelude::*;
 	use frame_system::pallet_prelude::*;
-	use super::*;
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_session::Config {
+	pub trait Config:
+		CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_session::Config
+	{
 		/// The identifier type for an offchain worker.
 		type AppCrypto: AppCrypto<Self::Public, Self::Signature>;
 
@@ -137,19 +137,24 @@ pub mod pallet {
 	pub struct Pallet<T>(_);
 
 	#[pallet::type_value]
-	pub(super) fn DefaultForAppchainId() -> Vec<u8> { Vec::new() }
+	pub(super) fn DefaultForAppchainId() -> Vec<u8> {
+		Vec::new()
+	}
 
 	#[pallet::storage]
 	#[pallet::getter(fn appchain_id)]
-	pub(super) type AppchainId<T: Config> = StorageValue<_, Vec<u8>, ValueQuery, DefaultForAppchainId>;
+	pub(super) type AppchainId<T: Config> =
+		StorageValue<_, Vec<u8>, ValueQuery, DefaultForAppchainId>;
 
 	/// The current set of validators of this appchain.
 	#[pallet::storage]
-	pub type CurrentValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
+	pub type CurrentValidatorSet<T: Config> =
+		StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
 	/// A list of candidate validator sets.
 	#[pallet::storage]
-	pub type CandidateValidatorSets<T: Config> = StorageValue<_, Vec<ValidatorSet<T::AccountId>>, ValueQuery>;
+	pub type CandidateValidatorSets<T: Config> =
+		StorageValue<_, Vec<ValidatorSet<T::AccountId>>, ValueQuery>;
 
 	/// A voting record for the index of CandidateValidatorSets.
 	#[pallet::storage]
@@ -221,7 +226,11 @@ pub mod pallet {
 				return;
 			}
 			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
-			log::info!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+			log::info!(
+				"🐙 Current block: {:?} (parent hash: {:?})",
+				block_number,
+				parent_hash
+			);
 
 			if !Self::should_send(block_number) {
 				return;
@@ -251,10 +260,7 @@ pub mod pallet {
 		/// By default unsigned transactions are disallowed, but implementing the validator
 		/// here we make sure that some particular calls (the ones produced by offchain worker)
 		/// are being whitelisted and marked as valid.
-		fn validate_unsigned(
-			_source: TransactionSource,
-			call: &Self::Call,
-		) -> TransactionValidity {
+		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			// Firstly let's check that we call the right function.
 			if let Call::submit_validator_set(ref payload, ref signature) = call {
 				let signature_valid =
@@ -277,7 +283,7 @@ pub mod pallet {
 	// These functions materialize as "extrinsics", which are often compared to transactions.
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 	#[pallet::call]
-	impl<T:Config> Pallet<T> {
+	impl<T: Config> Pallet<T> {
 		/// Submit a new set of validators and vote on this set.
 		///
 		/// If the set already exists in the CandidateValidatorSets, then the only thing
@@ -285,37 +291,53 @@ pub mod pallet {
 		#[pallet::weight(0)]
 		pub fn submit_validator_set(
 			origin: OriginFor<T>,
-			payload: ValidatorSetPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>,
+			payload: ValidatorSetPayload<
+				T::Public,
+				T::BlockNumber,
+				<T as frame_system::Config>::AccountId,
+			>,
 			_signature: T::Signature,
 		) -> DispatchResultWithPostInfo {
 			// This ensures that the function can only be called via unsigned transaction.
 			ensure_none(origin)?;
-			let cur_val_set = <CurrentValidatorSet<T>>::get().ok_or(Error::<T>::NoCurrentValidatorSet)?;
+			let cur_val_set =
+				<CurrentValidatorSet<T>>::get().ok_or(Error::<T>::NoCurrentValidatorSet)?;
 			let who = payload.public.clone().into_account();
 			//
 			log::info!(
 				"️️️🐙 current_validator_set: {:#?},\nnext_validator_set: {:#?},\nwho: {:?}",
-				cur_val_set, payload.val_set, who
+				cur_val_set,
+				payload.val_set,
+				who
 			);
 			let candidates = <CandidateValidatorSets<T>>::get();
 			for i in 0..candidates.len() {
 				log::info!(
 					"🐙 Candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
-					i, candidates.get(i), <Voters<T>>::get(i as u32)
+					i,
+					candidates.get(i),
+					<Voters<T>>::get(i as u32)
 				);
 			}
 			//
-			ensure!(payload.val_set.sequence_number == cur_val_set.sequence_number + 1, Error::<T>::WrongSequenceNumber);
+			ensure!(
+				payload.val_set.sequence_number == cur_val_set.sequence_number + 1,
+				Error::<T>::WrongSequenceNumber
+			);
 
-			let val = cur_val_set.validators
-				.iter()
-				.find(|v| {
-					let id = <pallet_session::Module<T>>::key_owner(KEY_TYPE, &payload.public.clone().into_account().encode());
-					log::info!("🐙 check {:#?} == {:#?}", v.id, id);
-					<T as pallet_session::Config>::ValidatorIdOf::convert(v.id.clone()) == id
-				});
+			let val = cur_val_set.validators.iter().find(|v| {
+				let id = <pallet_session::Module<T>>::key_owner(
+					KEY_TYPE,
+					&payload.public.clone().into_account().encode(),
+				);
+				log::info!("🐙 check {:#?} == {:#?}", v.id, id);
+				<T as pallet_session::Config>::ValidatorIdOf::convert(v.id.clone()) == id
+			});
 			if val.is_none() {
-				log::info!("🐙 Not a validator in current validator set: {:?}", payload.public.clone().into_account());
+				log::info!(
+					"🐙 Not a validator in current validator set: {:?}",
+					payload.public.clone().into_account()
+				);
 				return Err(Error::<T>::NotValidator.into());
 			}
 			let val = val.expect("Validator is valid; qed").clone();
@@ -326,7 +348,9 @@ pub mod pallet {
 			for i in 0..candidates.len() {
 				log::info!(
 					"🐙 candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
-					i, candidates.get(i), <Voters<T>>::get(i as u32)
+					i,
+					candidates.get(i),
+					<Voters<T>>::get(i as u32)
 				);
 			}
 			//
@@ -343,7 +367,7 @@ pub mod pallet {
 			asset_id: <T::Assets as fungibles::Inspect<T::AccountId>>::AssetId,
 			sender_id: Vec<u8>,
 			receiver: <T::Lookup as StaticLookup>::Source,
-			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance
+			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance,
 		) -> DispatchResultWithPostInfo {
 			// TODO
 			ensure_root(origin)?;
@@ -361,7 +385,7 @@ pub mod pallet {
 			origin: OriginFor<T>,
 			asset_id: <T::Assets as fungibles::Inspect<T::AccountId>>::AssetId,
 			receiver_id: Vec<u8>,
-			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance
+			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance,
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
@@ -372,13 +396,8 @@ pub mod pallet {
 		}
 	}
 
-	impl<T:Config> Pallet<T> {
-		fn initialize_validators(
-			vals: &Vec<(
-				<T as frame_system::Config>::AccountId,
-				u64,
-			)>,
-		) {
+	impl<T: Config> Pallet<T> {
+		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u64)>) {
 			if vals.len() != 0 {
 				assert!(
 					<CurrentValidatorSet<T>>::get().is_none(),
@@ -594,15 +613,19 @@ pub mod pallet {
 			body_str: &str,
 		) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
 			// TODO
-			let result = Self::extract_result(body_str).ok_or_else(|| {
-				log::info!("🐙 Can't extract result from body");
-				Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-			}).ok()?;
+			let result = Self::extract_result(body_str)
+				.ok_or_else(|| {
+					log::info!("🐙 Can't extract result from body");
+					Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+				})
+				.ok()?;
 
-			let result_str = sp_std::str::from_utf8(&result).map_err(|_| {
-				log::info!("🐙 No UTF8 result");
-				Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-			}).ok()?;
+			let result_str = sp_std::str::from_utf8(&result)
+				.map_err(|_| {
+					log::info!("🐙 No UTF8 result");
+					Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
+				})
+				.ok()?;
 
 			log::info!("🐙 Got result: {:?}", result_str);
 			let mut val_set: ValidatorSet<<T as frame_system::Config>::AccountId> = ValidatorSet {
@@ -671,7 +694,9 @@ pub mod pallet {
 											});
 										if id.is_some() && weight.is_some() {
 											let id = id.expect("id is valid; qed");
-											let weight = weight.expect("weight is valid; qed").integer as u64;
+											let weight =
+												weight.expect("weight is valid; qed").integer
+													as u64;
 											val_set.validators.push(Validator {
 												id: id,
 												weight: weight,
@@ -829,10 +854,7 @@ pub mod pallet {
 			);
 			if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
 				//
-				log::info!(
-					"🐙 current_validator_set: {:#?}",
-					cur_val_set
-				);
+				log::info!("🐙 current_validator_set: {:#?}", cur_val_set);
 				let candidates = <CandidateValidatorSets<T>>::get();
 				for i in 0..candidates.len() {
 					log::info!(
