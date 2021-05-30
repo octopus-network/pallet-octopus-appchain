@@ -46,13 +46,20 @@ pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"octo");
 /// Based on the above `KeyTypeId` we need to generate a pallet-specific crypto type wrappers.
 /// We can use from supported crypto kinds (`sr25519`, `ed25519` and `ecdsa`) and augment
 /// the types with this pallet-specific identifier.
-pub mod crypto {
+mod crypto {
 	use super::KEY_TYPE;
 	use sp_runtime::app_crypto::{app_crypto, sr25519};
 	app_crypto!(sr25519, KEY_TYPE);
-
-	pub type AuthorityId = Public;
 }
+
+/// Identity of an appchain authority.
+pub type AuthorityId = crypto::Public;
+
+type BalanceOfAsset<T> =
+	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::Balance;
+
+type AssetIdOfAsset<T> =
+	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::AssetId;
 
 /// Validator of appchain.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
@@ -101,7 +108,7 @@ pub mod pallet {
 		CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_session::Config
 	{
 		/// The identifier type for an offchain worker.
-		type AppCrypto: AppCrypto<Self::Public, Self::Signature>;
+		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
 		/// The overarching event type.
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
@@ -112,9 +119,6 @@ pub mod pallet {
 		type Assets: fungibles::Mutate<<Self as frame_system::Config>::AccountId>;
 
 		// Configuration parameters
-
-		/// The name/address of the relay contract on the motherchain.
-		const RELAY_CONTRACT_NAME: &'static [u8];
 
 		/// A grace period after we send transaction.
 		///
@@ -130,6 +134,12 @@ pub mod pallet {
 		/// multiple pallets send unsigned transactions.
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
+
+		/// The account_id/address of the relay contract on the motherchain.
+		const RELAY_CONTRACT: &'static [u8];
+
+		/// The account_id/address of the token locker contract on the motherchain.
+		const TOKEN_LOCKER_CONTRACT: &'static [u8];
 	}
 
 	#[pallet::pallet]
@@ -186,15 +196,18 @@ pub mod pallet {
 	}
 
 	#[pallet::event]
-	#[pallet::metadata(T::AccountId = "AccountId")]
+	#[pallet::metadata(
+		T::AccountId = "AccountId",
+		BalanceOfAsset<T> = "Balance",
+		AssetIdOfAsset<T> = "AssetId"
+	)]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		/// Event generated when a new voter votes on a validator set.
 		/// \[validator_set, voter\]
 		NewVoterFor(ValidatorSet<T::AccountId>, T::AccountId),
-		// TODO
-		Minted(u8, Vec<u8>, T::AccountId, u128),
-		Burned(u8, T::AccountId, Vec<u8>, u128),
+		Minted(AssetIdOfAsset<T>, Vec<u8>, T::AccountId, BalanceOfAsset<T>),
+		Burned(AssetIdOfAsset<T>, T::AccountId, Vec<u8>, BalanceOfAsset<T>),
 	}
 
 	// Errors inform users that something went wrong.
@@ -264,7 +277,7 @@ pub mod pallet {
 			// Firstly let's check that we call the right function.
 			if let Call::submit_validator_set(ref payload, ref signature) = call {
 				let signature_valid =
-					SignedPayload::<T>::verify::<T::AppCrypto>(payload, signature.clone());
+					SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone());
 				if !signature_valid {
 					return InvalidTransaction::BadProof.into();
 				}
@@ -373,8 +386,7 @@ pub mod pallet {
 			ensure_root(origin)?;
 			let receiver = T::Lookup::lookup(receiver)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
-			// TODO
-			Self::deposit_event(Event::Minted(0, sender_id, receiver, 41));
+			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
 
 			Ok(().into())
 		}
@@ -389,8 +401,7 @@ pub mod pallet {
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
-			// TODO
-			Self::deposit_event(Event::Burned(0, sender, receiver_id, 41));
+			Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
 
 			Ok(().into())
 		}
@@ -476,7 +487,7 @@ pub mod pallet {
 			// Make an external HTTP request to fetch the current validator set.
 			// Note this call will block until response is received.
 			let next_val_set = Self::fetch_validator_set(
-				T::RELAY_CONTRACT_NAME.to_vec(),
+				T::RELAY_CONTRACT.to_vec(),
 				Self::appchain_id(),
 				next_seq_num,
 			)
@@ -484,7 +495,7 @@ pub mod pallet {
 			log::info!("🐙 new validator set: {:#?}", next_val_set);
 
 			// -- Sign using any account
-			let (_, result) = Signer::<T, T::AppCrypto>::any_account()
+			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
 				.send_unsigned_transaction(
 					|account| ValidatorSetPayload {
 						public: account.public.clone(),
@@ -919,11 +930,11 @@ pub mod pallet {
 	}
 
 	impl<T: Config> sp_runtime::BoundToRuntimeAppPublic for Pallet<T> {
-		type Public = crypto::AuthorityId;
+		type Public = AuthorityId;
 	}
 
 	impl<T: Config> OneSessionHandler<T::AccountId> for Pallet<T> {
-		type Key = crypto::AuthorityId;
+		type Key = AuthorityId;
 
 		fn on_genesis_session<'a, I: 'a>(_authorities: I)
 		where
