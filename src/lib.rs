@@ -56,9 +56,6 @@ pub mod crypto {
 	pub type AuthorityId = Public;
 }
 
-/// Index of an appchain on the motherchain.
-pub type ChainId = u32;
-
 /// Validator of appchain.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Validator<AccountId> {
@@ -119,10 +116,6 @@ pub mod pallet {
 		/// The name/address of the relay contract on the motherchain.
 		const RELAY_CONTRACT_NAME: &'static [u8];
 
-		/// The id assigned by motherchain to this appchain.
-		#[pallet::constant]
-		type AppchainId: Get<ChainId>;
-
 		/// A grace period after we send transaction.
 		///
 		/// To avoid sending too many transactions, we only attempt to send one
@@ -143,6 +136,13 @@ pub mod pallet {
 	#[pallet::generate_store(pub(super) trait Store)]
 	pub struct Pallet<T>(_);
 
+	#[pallet::type_value]
+	pub(super) fn DefaultForAppchainId() -> Vec<u8> { Vec::new() }
+
+	#[pallet::storage]
+	#[pallet::getter(fn appchain_id)]
+	pub(super) type AppchainId<T: Config> = StorageValue<_, Vec<u8>, ValueQuery, DefaultForAppchainId>;
+
 	/// The current set of validators of this appchain.
 	#[pallet::storage]
 	pub type CurrentValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
@@ -158,19 +158,24 @@ pub mod pallet {
 
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
+		pub appchain_id: Vec<u8>,
 		pub validators: Vec<(T::AccountId, u64)>,
 	}
 
 	#[cfg(feature = "std")]
 	impl<T: Config> Default for GenesisConfig<T> {
 		fn default() -> Self {
-			Self { validators: Vec::new() }
+			Self {
+				appchain_id: Vec::new(),
+				validators: Vec::new(),
+			}
 		}
 	}
 
 	#[pallet::genesis_build]
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
 		fn build(&self) {
+			<AppchainId<T>>::put(&self.appchain_id);
 			Pallet::<T>::initialize_validators(&self.validators);
 		}
 	}
@@ -210,9 +215,9 @@ pub mod pallet {
 		/// so the code should be able to handle that.
 		/// You can use `Local Storage` API to coordinate runs of the worker.
 		fn offchain_worker(block_number: T::BlockNumber) {
-			let appchain_id = T::AppchainId::get();
-			if appchain_id == 0 {
-				// detach appchain from motherchain when appchain_id == 0
+			let appchain_id = Self::appchain_id();
+			if appchain_id.len() == 0 {
+				// detach appchain from motherchain when appchain_id == ""
 				return;
 			}
 			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
@@ -453,7 +458,7 @@ pub mod pallet {
 			// Note this call will block until response is received.
 			let next_val_set = Self::fetch_validator_set(
 				T::RELAY_CONTRACT_NAME.to_vec(),
-				T::AppchainId::get(),
+				Self::appchain_id(),
 				next_seq_num,
 			)
 			.map_err(|_| "Failed to fetch validator set")?;
@@ -478,7 +483,7 @@ pub mod pallet {
 		/// Fetch the validator set of a specified appchain with seq_num from relay contract.
 		fn fetch_validator_set(
 			relay_contract: Vec<u8>,
-			appchain_id: u32,
+			appchain_id: Vec<u8>,
 			seq_num: u32,
 		) -> Result<ValidatorSet<<T as frame_system::Config>::AccountId>, http::Error> {
 			// We want to keep the offchain worker execution time reasonable, so we set a hard-coded
@@ -574,9 +579,9 @@ pub mod pallet {
 			Ok(val_set)
 		}
 
-		fn encode_args(appchain_id: u32, seq_num: u32) -> Option<Vec<u8>> {
+		fn encode_args(appchain_id: Vec<u8>, seq_num: u32) -> Option<Vec<u8>> {
 			let a = String::from("{\"appchain_id\":");
-			let appchain_id = appchain_id.to_string();
+			let appchain_id = sp_std::str::from_utf8(&appchain_id).expect("octopus team will ensure that the appchain_id of a live appchain is a valid UTF8 string; qed");
 			let b = String::from(",\"seq_num\":");
 			let seq_num = seq_num.to_string();
 			let c = String::from("}");
