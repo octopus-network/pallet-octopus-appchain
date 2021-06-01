@@ -55,10 +55,10 @@ mod crypto {
 /// Identity of an appchain authority.
 pub type AuthorityId = crypto::Public;
 
-type BalanceOfAsset<T> =
+type AssetBalanceOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::Balance;
 
-type AssetIdOfAsset<T> =
+type AssetIdOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::AssetId;
 
 /// Validator of appchain.
@@ -206,8 +206,8 @@ pub mod pallet {
 		/// Event generated when a new voter votes on a validator set.
 		/// \[validator_set, voter\]
 		NewVoterFor(ValidatorSet<T::AccountId>, T::AccountId),
-		Minted(AssetIdOfAsset<T>, Vec<u8>, T::AccountId, BalanceOfAsset<T>),
-		Burned(AssetIdOfAsset<T>, T::AccountId, Vec<u8>, BalanceOfAsset<T>),
+		Minted(AssetIdOf<T>, Vec<u8>, T::AccountId, AssetBalanceOf<T>),
+		Burned(AssetIdOf<T>, T::AccountId, Vec<u8>, AssetBalanceOf<T>),
 	}
 
 	// Errors inform users that something went wrong.
@@ -377,10 +377,10 @@ pub mod pallet {
 		#[transactional]
 		pub fn mint(
 			origin: OriginFor<T>,
-			asset_id: <T::Assets as fungibles::Inspect<T::AccountId>>::AssetId,
+			asset_id: AssetIdOf<T>,
 			sender_id: Vec<u8>,
 			receiver: <T::Lookup as StaticLookup>::Source,
-			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance,
+			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
 			// TODO
 			ensure_root(origin)?;
@@ -395,9 +395,9 @@ pub mod pallet {
 		#[transactional]
 		pub fn burn(
 			origin: OriginFor<T>,
-			asset_id: <T::Assets as fungibles::Inspect<T::AccountId>>::AssetId,
+			asset_id: AssetIdOf<T>,
 			receiver_id: Vec<u8>,
-			amount: <T::Assets as fungibles::Inspect<T::AccountId>>::Balance,
+			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
