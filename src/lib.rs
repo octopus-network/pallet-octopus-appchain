@@ -137,9 +137,6 @@ pub mod pallet {
 
 		/// The account_id/address of the relay contract on the motherchain.
 		const RELAY_CONTRACT: &'static [u8];
-
-		/// The account_id/address of the token locker contract on the motherchain.
-		const TOKEN_LOCKER_CONTRACT: &'static [u8];
 	}
 
 	#[pallet::pallet]
