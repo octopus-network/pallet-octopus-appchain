@@ -170,7 +170,7 @@ pub mod pallet {
 
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
-		pub appchain_id: Vec<u8>,
+		pub appchain_id: String,
 		pub validators: Vec<(T::AccountId, u64)>,
 	}
 
@@ -178,7 +178,7 @@ pub mod pallet {
 	impl<T: Config> Default for GenesisConfig<T> {
 		fn default() -> Self {
 			Self {
-				appchain_id: Vec::new(),
+				appchain_id: String::new(),
 				validators: Vec::new(),
 			}
 		}
@@ -187,7 +187,7 @@ pub mod pallet {
 	#[pallet::genesis_build]
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
 		fn build(&self) {
-			<AppchainId<T>>::put(&self.appchain_id);
+			<AppchainId<T>>::put(self.appchain_id.as_bytes());
 			Pallet::<T>::initialize_validators(&self.validators);
 		}
 	}
