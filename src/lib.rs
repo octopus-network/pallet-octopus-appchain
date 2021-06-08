@@ -96,6 +96,21 @@ impl<T: SigningTypes> SignedPayload<T>
 	}
 }
 
+// TODO: move to borsh encoded?
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct XTransferPayload<AccountId: Encode> {
+	pub token_id: Vec<u8>,
+	pub sender: AccountId,
+	pub receiver_id: Vec<u8>,
+	pub amount: u128,
+}
+
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct Message {
+	nonce: u64,
+	payload: Vec<u8>,
+}
+
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
@@ -168,6 +183,12 @@ pub mod pallet {
 	pub type Voters<T: Config> =
 		StorageMap<_, Twox64Concat, u32, Vec<Validator<T::AccountId>>, ValueQuery>;
 
+	#[pallet::storage]
+	pub type MessageQueue<T: Config> = StorageValue<_, Vec<Message>, ValueQuery>;
+
+	#[pallet::storage]
+	pub type Nonce<T: Config> = StorageValue<_, u64, ValueQuery>;
+
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
@@ -216,6 +237,9 @@ pub mod pallet {
 		WrongSequenceNumber,
 		/// Must be a validator.
 		NotValidator,
+
+		/// Nonce overflow.
+		NonceOverflow,
 	}
 
 	#[pallet::hooks]
@@ -398,6 +422,15 @@ pub mod pallet {
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
+
+			let message = XTransferPayload {
+				token_id: "USDC.testnet".as_bytes().to_vec(), // TODO
+				sender: sender.clone(),
+				receiver_id: receiver_id.clone(),
+				amount: 41, // TODO
+			};
+
+			Self::submit(&sender, &message.encode())?;
 			Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
 
 			Ok(().into())
@@ -848,6 +881,22 @@ pub mod pallet {
 				// claim a reward.
 				.propagate(true)
 				.build()
+		}
+
+		fn submit(_who: &T::AccountId, payload: &[u8]) -> DispatchResultWithPostInfo {
+			Nonce::<T>::try_mutate(|nonce| -> DispatchResultWithPostInfo {
+				if let Some(v) = nonce.checked_add(1) {
+					*nonce = v;
+				} else {
+					return Err(Error::<T>::NonceOverflow.into());
+				}
+
+				MessageQueue::<T>::append(Message {
+					nonce: *nonce,
+					payload: payload.to_vec(),
+				});
+				Ok(().into())
+			})
 		}
 	}
 
