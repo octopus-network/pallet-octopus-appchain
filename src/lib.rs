@@ -14,12 +14,13 @@ use frame_system::offchain::{
 	CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer, SigningTypes,
 };
 use lite_json::json::JsonValue;
-use sp_core::crypto::KeyTypeId;
+use sp_core::{crypto::KeyTypeId, H256};
+use sp_io::offchain_index;
 use sp_runtime::traits::StaticLookup;
 use sp_runtime::{
 	offchain::{http, storage::StorageValueRef, Duration},
-	traits::{Convert, IdentifyAccount},
-	RuntimeDebug,
+	traits::{Convert, Hash, IdentifyAccount, Keccak256},
+	DigestItem, RuntimeDebug,
 };
 use sp_std::prelude::*;
 
@@ -244,6 +245,11 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+		/// Initialization
+		fn on_initialize(now: BlockNumberFor<T>) -> Weight {
+			Self::commit()
+		}
+
 		/// Offchain Worker entry point.
 		///
 		/// By implementing `fn offchain_worker` you declare a new offchain worker.
@@ -897,6 +903,37 @@ pub mod pallet {
 				});
 				Ok(().into())
 			})
+		}
+
+		fn commit() -> Weight {
+			let messages: Vec<Message> = MessageQueue::<T>::take();
+			if messages.is_empty() {
+				return 0;
+			}
+
+			let commitment_hash = Self::make_commitment_hash(&messages);
+
+			<frame_system::Pallet<T>>::deposit_log(DigestItem::Other(
+				commitment_hash.as_bytes().to_vec(),
+			));
+
+			let key = Self::make_offchain_key(commitment_hash);
+			offchain_index::set(&*key, &messages.encode());
+
+			0
+		}
+
+		fn make_commitment_hash(messages: &[Message]) -> H256 {
+			let messages: Vec<_> = messages
+				.iter()
+				.map(|message| (message.nonce, message.payload.clone()))
+				.collect();
+			let input = messages.encode();
+			Keccak256::hash(&input)
+		}
+
+		fn make_offchain_key(hash: H256) -> Vec<u8> {
+			(b"commitment", hash).encode()
 		}
 	}
 
