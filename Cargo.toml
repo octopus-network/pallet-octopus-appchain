@@ -15,6 +15,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 base64 = { default-features = false, version = '0.13', features = ['alloc'] }
+borsh = { default-features = false, version = '0.9.0' }
 codec = { package = "parity-scale-codec", version = "2.0.0", default-features = false, features = ["derive"] }
 hex = { default-features = false, version = '0.4', features = ['alloc'] }
 lite-json = { default-features = false, version = '0.1' }
@@ -38,6 +39,7 @@ sp-keystore = { default-features = false, version = '0.9.0' }
 default = ['std']
 std = [
 	'base64/std',
+	'borsh/std',
 	'codec/std',
 	'hex/std',
 	'lite-json/std',

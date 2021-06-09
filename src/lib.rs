@@ -6,6 +6,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use codec::{Decode, Encode};
 use frame_support::traits::OneSessionHandler;
 use frame_support::{traits::tokens::fungibles, transactional};
@@ -97,11 +98,10 @@ impl<T: SigningTypes> SignedPayload<T>
 	}
 }
 
-// TODO: move to borsh encoded?
-#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct XTransferPayload<AccountId: Encode> {
+#[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct XTransferPayload {
 	pub token_id: Vec<u8>,
-	pub sender: AccountId,
+	pub sender: Vec<u8>,
 	pub receiver_id: Vec<u8>,
 	pub amount: u128,
 }
@@ -431,12 +431,12 @@ pub mod pallet {
 
 			let message = XTransferPayload {
 				token_id: "USDC.testnet".as_bytes().to_vec(), // TODO
-				sender: sender.clone(),
+				sender: sender.encode(),
 				receiver_id: receiver_id.clone(),
 				amount: 41, // TODO
 			};
 
-			Self::submit(&sender, &message.encode())?;
+			Self::submit(&sender, &message.try_to_vec().unwrap())?;
 			Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
 
 			Ok(().into())
