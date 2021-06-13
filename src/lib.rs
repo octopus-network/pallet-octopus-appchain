@@ -15,6 +15,7 @@ use frame_system::offchain::{
 	CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer, SigningTypes,
 };
 use lite_json::json::JsonValue;
+use serde::{Deserialize, Serialize};
 use sp_core::{crypto::KeyTypeId, H256};
 use sp_io::offchain_index;
 use sp_runtime::traits::StaticLookup;
@@ -287,6 +288,7 @@ pub mod pallet {
 			}
 			log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
 
+			// TODO: refactoring into a unified request
 			if let Err(e) = Self::fetch_and_update_validator_set(block_number, appchain_id, next_seq_num) {
 				log::info!("🐙 Error: {}", e);
 			}
@@ -514,6 +516,39 @@ pub mod pallet {
 				// already did.
 				Ok(Err(_)) => false,
 			}
+		}
+
+		fn fetch_and_update_validator_set(
+			block_number: T::BlockNumber,
+			appchain_id: Vec<u8>,
+			next_seq_num: u32,
+		) -> Result<(), &'static str> {
+			log::info!("🐙 in fetch_and_update_validator_set");
+
+			// Make an external HTTP request to fetch the current validator set.
+			// Note this call will block until response is received.
+			let next_val_set = Self::fetch_validator_set(
+				T::RELAY_CONTRACT.to_vec(),
+				appchain_id,
+				next_seq_num,
+			)
+			.map_err(|_| "Failed to fetch validator set")?;
+			log::info!("🐙 new validator set: {:#?}", next_val_set);
+
+			// -- Sign using any account
+			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
+				.send_unsigned_transaction(
+					|account| ValidatorSetPayload {
+						public: account.public.clone(),
+						block_number,
+						val_set: next_val_set.clone(),
+					},
+					|payload, signature| Call::submit_validator_set(payload, signature),
+				)
+				.ok_or("🐙 No local accounts accounts available.")?;
+			result.map_err(|()| "🐙 Unable to submit transaction")?;
+
+			Ok(())
 		}
 
 		/// Add new validator set to the CandidateValidatorSets.

@@ -1,41 +1,23 @@
 use super::*;
 
+#[derive(Serialize, Deserialize)]
+struct Response {
+	jsonrpc: String,
+	result: ResponseResult,
+	id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ResponseResult {
+	result: Vec<u8>,
+	logs: Vec<u8>,
+	block_height: u64,
+	block_hash: String,
+}
+
 impl<T: Config> Pallet<T> {
-	pub(super) fn fetch_and_update_validator_set(
-		block_number: T::BlockNumber,
-		appchain_id: Vec<u8>,
-		next_seq_num: u32,
-	) -> Result<(), &'static str> {
-		log::info!("🐙 in fetch_and_update_validator_set");
-
-		// Make an external HTTP request to fetch the current validator set.
-		// Note this call will block until response is received.
-		let next_val_set = Self::fetch_validator_set(
-			T::RELAY_CONTRACT.to_vec(),
-			appchain_id,
-			next_seq_num,
-		)
-		.map_err(|_| "Failed to fetch validator set")?;
-		log::info!("🐙 new validator set: {:#?}", next_val_set);
-
-		// -- Sign using any account
-		let (_, result) = Signer::<T, T::AuthorityId>::any_account()
-			.send_unsigned_transaction(
-				|account| ValidatorSetPayload {
-					public: account.public.clone(),
-					block_number,
-					val_set: next_val_set.clone(),
-				},
-				|payload, signature| Call::submit_validator_set(payload, signature),
-			)
-			.ok_or("🐙 No local accounts accounts available.")?;
-		result.map_err(|()| "🐙 Unable to submit transaction")?;
-
-		Ok(())
-	}
-
 	/// Fetch the validator set of a specified appchain with seq_num from relay contract.
-	fn fetch_validator_set(
+	pub(super) fn fetch_validator_set(
 		relay_contract: Vec<u8>,
 		appchain_id: Vec<u8>,
 		seq_num: u32,
@@ -109,20 +91,17 @@ impl<T: Config> Pallet<T> {
 		// Note that the return object allows you to read the body in chunks as well
 		// with a way to control the deadline.
 		let body = response.body().collect::<Vec<u8>>();
+		log::info!("🐙 body: {:?}", body);
 
-		// Create a str slice from the body.
-		let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
-			log::info!("🐙 No UTF8 body");
-			http::Error::Unknown
-		})?;
-		log::info!("🐙 Got response: {:?}", body_str);
+		// TODO
+		let json_response: Response = serde_json::from_slice(&body).unwrap();
 
-		let val_set = match Self::parse_validator_set(body_str) {
+		let val_set = match Self::parse_validator_set(json_response.result.result.clone()) {
 			Some(val_set) => Ok(val_set),
 			None => {
 				log::info!(
 					"🐙 Unable to extract validator set from the response: {:?}",
-					body_str
+					json_response.result.result
 				);
 				Err(http::Error::Unknown)
 			}
@@ -134,9 +113,9 @@ impl<T: Config> Pallet<T> {
 	}
 
 	fn encode_args(appchain_id: Vec<u8>, seq_num: u32) -> Option<Vec<u8>> {
-		let a = String::from("{\"appchain_id\":");
+		let a = String::from("{\"appchain_id\":\"");
 		let appchain_id = sp_std::str::from_utf8(&appchain_id).expect("octopus team will ensure that the appchain_id of a live appchain is a valid UTF8 string; qed");
-		let b = String::from(",\"seq_num\":");
+		let b = String::from("\",\"seq_num\":");
 		let seq_num = seq_num.to_string();
 		let c = String::from("}");
 		let json = a + &appchain_id + &b + &seq_num + &c;
@@ -145,16 +124,8 @@ impl<T: Config> Pallet<T> {
 	}
 
 	fn parse_validator_set(
-		body_str: &str,
+		result: Vec<u8>,
 	) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
-		// TODO
-		let result = Self::extract_result(body_str)
-			.ok_or_else(|| {
-				log::info!("🐙 Can't extract result from body");
-				Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-			})
-			.ok()?;
-
 		let result_str = sp_std::str::from_utf8(&result)
 			.map_err(|_| {
 				log::info!("🐙 No UTF8 result");
@@ -245,68 +216,6 @@ impl<T: Config> Pallet<T> {
 						_ => None,
 					});
 				Some(val_set)
-			}
-			_ => None,
-		})
-	}
-
-	fn extract_result(body_str: &str) -> Option<Vec<u8>> {
-		let val = lite_json::parse_json(body_str);
-		val.ok().and_then(|v| match v {
-			JsonValue::Object(obj) => {
-				let version = obj
-					.clone()
-					.into_iter()
-					.find(|(k, _)| {
-						let mut jsonrpc = "jsonrpc".chars();
-						k.iter().all(|k| Some(*k) == jsonrpc.next())
-					})
-					.and_then(|v| match v.1 {
-						JsonValue::String(s) => Some(s),
-						_ => None,
-					})?;
-				log::info!("🐙 version: {:?}", version);
-				let id = obj
-					.clone()
-					.into_iter()
-					.find(|(k, _)| {
-						let mut id = "id".chars();
-						k.iter().all(|k| Some(*k) == id.next())
-					})
-					.and_then(|v| match v.1 {
-						JsonValue::String(s) => Some(s),
-						_ => None,
-					})?;
-				log::info!("🐙 id: {:?}", id);
-				obj.into_iter()
-					.find(|(k, _)| {
-						let mut result = "result".chars();
-						k.iter().all(|k| Some(*k) == result.next())
-					})
-					.and_then(|(_, v)| match v {
-						JsonValue::Object(obj) => {
-							obj.into_iter()
-								.find(|(k, _)| {
-									let mut values = "result".chars();
-									k.iter().all(|k| Some(*k) == values.next())
-								})
-								.and_then(|(_, v)| match v {
-									JsonValue::Array(vs) => {
-										// TODO
-										let res: Vec<u8> = vs
-											.iter()
-											.map(|jv| match jv {
-												JsonValue::Number(n) => n.integer as u8,
-												_ => 0,
-											})
-											.collect();
-										Some(res)
-									}
-									_ => None,
-								})
-						}
-						_ => None,
-					})
 			}
 			_ => None,
 		})
