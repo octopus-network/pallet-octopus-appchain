@@ -73,6 +73,7 @@ pub struct Validator<AccountId> {
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	id: AccountId,
 	/// The weight of this validator in motherchain's staking system.
+	// TODO: String -> u128
 	weight: u64,
 }
 
@@ -97,6 +98,19 @@ pub struct ValidatorSet<AccountId> {
 	/// Validators in this set.
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	validators: Vec<Validator<AccountId>>,
+}
+
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct LockEvent<AccountId> {
+	/// The sequence number of this set on the motherchain.
+	#[serde(rename = "seq_num")]
+	sequence_number: u32,
+	token_id: Vec<u8>,
+	/// Validators in this set.
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	receiver_id: AccountId,
+	amount: Vec<u8>,
 }
 
 /// Payload used by this crate to hold validator set
