@@ -1,13 +1,13 @@
 use super::*;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, RuntimeDebug)]
 struct Response {
 	jsonrpc: String,
 	result: ResponseResult,
 	id: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, RuntimeDebug)]
 struct ResponseResult {
 	result: Vec<u8>,
 	logs: Vec<u8>,
@@ -67,10 +67,7 @@ impl<T: Config> Pallet<T> {
 		// We set the deadline for sending of the request, note that awaiting response can
 		// have a separate deadline. Next we send the request, before that it's also possible
 		// to alter request headers or stream body content in case of non-GET requests.
-		let pending = request
-			.deadline(deadline)
-			.send()
-			.map_err(|_| http::Error::IoError)?;
+		let pending = request.deadline(deadline).send().map_err(|_| http::Error::IoError)?;
 
 		// The request is already being processed by the host, we are free to do anything
 		// else in the worker (we can send multiple concurrent requests too).
@@ -78,9 +75,7 @@ impl<T: Config> Pallet<T> {
 		// so we can block current thread and wait for it to finish.
 		// Note that since the request is being driven by the host, we don't have to wait
 		// for the request to have it complete, we will just not read the response.
-		let response = pending
-			.try_wait(deadline)
-			.map_err(|_| http::Error::DeadlineReached)??;
+		let response = pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
 		// Let's check the status code before we proceed to reading the response.
 		if response.code != 200 {
 			log::info!("🐙 Unexpected status code: {}", response.code);
@@ -95,17 +90,9 @@ impl<T: Config> Pallet<T> {
 
 		// TODO
 		let json_response: Response = serde_json::from_slice(&body).unwrap();
-
-		let val_set = match Self::parse_validator_set(json_response.result.result.clone()) {
-			Some(val_set) => Ok(val_set),
-			None => {
-				log::info!(
-					"🐙 Unable to extract validator set from the response: {:?}",
-					json_response.result.result
-				);
-				Err(http::Error::Unknown)
-			}
-		}?;
+		log::info!("🐙 json_response: {:?}", json_response);
+		let val_set: ValidatorSet<<T as frame_system::Config>::AccountId> =
+			serde_json::from_slice(&json_response.result.result).unwrap();
 
 		log::info!("🐙 Got validator set: {:?}", val_set);
 
@@ -121,103 +108,5 @@ impl<T: Config> Pallet<T> {
 		let json = a + &appchain_id + &b + &seq_num + &c;
 		let res = base64::encode(json).into_bytes();
 		Some(res)
-	}
-
-	fn parse_validator_set(
-		result: Vec<u8>,
-	) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
-		let result_str = sp_std::str::from_utf8(&result)
-			.map_err(|_| {
-				log::info!("🐙 No UTF8 result");
-				Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-			})
-			.ok()?;
-
-		log::info!("🐙 Got result: {:?}", result_str);
-		let mut val_set: ValidatorSet<<T as frame_system::Config>::AccountId> = ValidatorSet {
-			sequence_number: 0,
-			validators: vec![],
-		};
-		let val = lite_json::parse_json(result_str);
-		val.ok().and_then(|v| match v {
-			JsonValue::Object(obj) => {
-				val_set.sequence_number = obj
-					.clone()
-					.into_iter()
-					.find(|(k, _)| {
-						let mut sequence_number = "seq_num".chars();
-						k.iter().all(|k| Some(*k) == sequence_number.next())
-					})
-					.and_then(|v| match v.1 {
-						JsonValue::Number(number) => Some(number),
-						_ => None,
-					})?
-					.integer as u32;
-				obj.into_iter()
-					.find(|(k, _)| {
-						let mut validators = "validators".chars();
-						k.iter().all(|k| Some(*k) == validators.next())
-					})
-					.and_then(|(_, v)| match v {
-						JsonValue::Array(vs) => {
-							vs.iter().for_each(|v| match v {
-								JsonValue::Object(obj) => {
-									let id = obj
-										.clone()
-										.into_iter()
-										.find(|(k, _)| {
-											let mut id = "id".chars();
-											k.iter().all(|k| Some(*k) == id.next())
-										})
-										.and_then(|v| match v.1 {
-											JsonValue::String(s) => {
-												let data: Vec<u8> = s
-													.iter()
-													.skip(2)
-													.map(|c| *c as u8)
-													.collect::<Vec<_>>();
-												let b = hex::decode(data).map_err(|_| {
-													log::info!("🐙 Not a valid hex string");
-													Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-												}).ok()?;
-												<T as frame_system::Config>::AccountId::decode(
-													&mut &b[..],
-												)
-												.ok()
-											}
-											_ => None,
-										});
-									let weight = obj
-										.clone()
-										.into_iter()
-										.find(|(k, _)| {
-											let mut weight = "weight".chars();
-											k.iter().all(|k| Some(*k) == weight.next())
-										})
-										.and_then(|v| match v.1 {
-											JsonValue::Number(number) => Some(number),
-											_ => None,
-										});
-									if id.is_some() && weight.is_some() {
-										let id = id.expect("id is valid; qed");
-										let weight =
-											weight.expect("weight is valid; qed").integer
-												as u64;
-										val_set.validators.push(Validator {
-											id: id,
-											weight: weight,
-										});
-									}
-								}
-								_ => (),
-							});
-							Some(0)
-						}
-						_ => None,
-					});
-				Some(val_set)
-			}
-			_ => None,
-		})
 	}
 }

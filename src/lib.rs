@@ -14,8 +14,7 @@ use frame_system::offchain::AppCrypto;
 use frame_system::offchain::{
 	CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer, SigningTypes,
 };
-use lite_json::json::JsonValue;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer};
 use sp_core::{crypto::KeyTypeId, H256};
 use sp_io::offchain_index;
 use sp_runtime::traits::StaticLookup;
@@ -67,20 +66,36 @@ type AssetIdOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::AssetId;
 
 /// Validator of appchain.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Validator<AccountId> {
 	/// The validator's id.
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(bound(deserialize = "AccountId: Decode"))]
 	id: AccountId,
 	/// The weight of this validator in motherchain's staking system.
 	weight: u64,
 }
 
+fn deserialize_from_hex_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
+where
+	S: Decode,
+	D: Deserializer<'de>,
+{
+	let account_id_str: String = Deserialize::deserialize(deserializer)?;
+	// TODO
+	let account_id_hex =
+		hex::decode(&account_id_str[2..]).map_err(|e| de::Error::custom(e.to_string()))?;
+	S::decode(&mut &account_id_hex[..]).map_err(|e| de::Error::custom(e.to_string()))
+}
+
 /// The validator set of appchain.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct ValidatorSet<AccountId> {
 	/// The sequence number of this set on the motherchain.
+	#[serde(rename = "seq_num")]
 	sequence_number: u32,
 	/// Validators in this set.
+	#[serde(bound(deserialize = "AccountId: Decode"))]
 	validators: Vec<Validator<AccountId>>,
 }
 
@@ -202,10 +217,7 @@ pub mod pallet {
 	#[cfg(feature = "std")]
 	impl<T: Config> Default for GenesisConfig<T> {
 		fn default() -> Self {
-			Self {
-				appchain_id: String::new(),
-				validators: Vec::new(),
-			}
+			Self { appchain_id: String::new(), validators: Vec::new() }
 		}
 	}
 
@@ -269,11 +281,7 @@ pub mod pallet {
 				return;
 			}
 			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
-			log::info!(
-				"🐙 Current block: {:?} (parent hash: {:?})",
-				block_number,
-				parent_hash
-			);
+			log::info!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
 			if !Self::should_send(block_number) {
 				return;
@@ -289,7 +297,9 @@ pub mod pallet {
 			log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
 
 			// TODO: refactoring into a unified request
-			if let Err(e) = Self::fetch_and_update_validator_set(block_number, appchain_id, next_seq_num) {
+			if let Err(e) =
+				Self::fetch_and_update_validator_set(block_number, appchain_id, next_seq_num)
+			{
 				log::info!("🐙 Error: {}", e);
 			}
 		}
@@ -458,10 +468,7 @@ pub mod pallet {
 					sequence_number: 0,
 					validators: vals
 						.iter()
-						.map(|x| Validator {
-							id: x.0.clone(),
-							weight: x.1,
-						})
+						.map(|x| Validator { id: x.0.clone(), weight: x.1 })
 						.collect::<Vec<_>>(),
 				});
 			}
@@ -527,12 +534,9 @@ pub mod pallet {
 
 			// Make an external HTTP request to fetch the current validator set.
 			// Note this call will block until response is received.
-			let next_val_set = Self::fetch_validator_set(
-				T::RELAY_CONTRACT.to_vec(),
-				appchain_id,
-				next_seq_num,
-			)
-			.map_err(|_| "Failed to fetch validator set")?;
+			let next_val_set =
+				Self::fetch_validator_set(T::RELAY_CONTRACT.to_vec(), appchain_id, next_seq_num)
+					.map_err(|_| "Failed to fetch validator set")?;
 			log::info!("🐙 new validator set: {:#?}", next_val_set);
 
 			// -- Sign using any account
@@ -624,10 +628,7 @@ pub mod pallet {
 					return Err(Error::<T>::NonceOverflow.into());
 				}
 
-				MessageQueue::<T>::append(Message {
-					nonce: *nonce,
-					payload: payload.to_vec(),
-				});
+				MessageQueue::<T>::append(Message { nonce: *nonce, payload: payload.to_vec() });
 				Ok(().into())
 			})
 		}
@@ -651,10 +652,8 @@ pub mod pallet {
 		}
 
 		fn make_commitment_hash(messages: &[Message]) -> H256 {
-			let messages: Vec<_> = messages
-				.iter()
-				.map(|message| (message.nonce, message.payload.clone()))
-				.collect();
+			let messages: Vec<_> =
+				messages.iter().map(|message| (message.nonce, message.payload.clone())).collect();
 			let input = messages.encode();
 			Keccak256::hash(&input)
 		}
@@ -704,13 +703,7 @@ pub mod pallet {
 						}
 						<CandidateValidatorSets<T>>::kill();
 						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
-						Some(
-							new_val_set
-								.validators
-								.into_iter()
-								.map(|vals| vals.id)
-								.collect(),
-						)
+						Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
 					}
 					None => {
 						log::info!("🐙 validator set has't changed");
