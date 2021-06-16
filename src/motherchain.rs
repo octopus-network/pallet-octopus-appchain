@@ -86,11 +86,11 @@ impl<T: Config> Pallet<T> {
 		// Note that the return object allows you to read the body in chunks as well
 		// with a way to control the deadline.
 		let body = response.body().collect::<Vec<u8>>();
-		log::info!("🐙 body: {:?}", body);
+		// log::info!("🐙 body: {:?}", body);
 
 		// TODO
 		let json_response: Response = serde_json::from_slice(&body).unwrap();
-		log::info!("🐙 json_response: {:?}", json_response);
+		// log::info!("🐙 json_response: {:?}", json_response);
 		let val_set: ValidatorSet<<T as frame_system::Config>::AccountId> =
 			serde_json::from_slice(&json_response.result.result).unwrap();
 
@@ -181,11 +181,11 @@ impl<T: Config> Pallet<T> {
 		// Note that the return object allows you to read the body in chunks as well
 		// with a way to control the deadline.
 		let body = response.body().collect::<Vec<u8>>();
-		log::info!("🐙 body: {:?}", body);
+		// log::info!("🐙 body: {:?}", body);
 
 		// TODO
 		let json_response: Response = serde_json::from_slice(&body).unwrap();
-		log::info!("🐙 json_response: {:?}", json_response);
+		// log::info!("🐙 json_response: {:?}", json_response);
 		let events: Vec<LockEvent<<T as frame_system::Config>::AccountId>> =
 			serde_json::from_slice(&json_response.result.result).unwrap();
 

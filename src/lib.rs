@@ -105,12 +105,24 @@ pub struct LockEvent<AccountId> {
 	/// The sequence number of this set on the motherchain.
 	#[serde(rename = "seq_num")]
 	sequence_number: u32,
+	#[serde(with = "serde_bytes")]
 	token_id: Vec<u8>,
 	/// Validators in this set.
 	#[serde(deserialize_with = "deserialize_from_hex_str")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	receiver_id: AccountId,
-	amount: Vec<u8>,
+	#[serde(deserialize_with = "deserialize_from_str")]
+	amount: u128,
+}
+
+pub fn deserialize_from_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
+where
+	S: sp_std::str::FromStr,
+	D: Deserializer<'de>,
+	<S as sp_std::str::FromStr>::Err: ToString,
+{
+	let amount_str: String = Deserialize::deserialize(deserializer)?;
+	amount_str.parse::<S>().map_err(|e| de::Error::custom(e.to_string()))
 }
 
 /// Payload used by this crate to hold validator set
@@ -311,10 +323,15 @@ pub mod pallet {
 			log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
 
 			// TODO: refactoring into a unified request
-			if let Err(e) =
-				Self::fetch_and_update_validator_set(block_number, appchain_id, next_seq_num)
-			{
-				log::info!("🐙 Error: {}", e);
+			if let Err(e) = Self::fetch_and_update_validator_set(
+				block_number,
+				appchain_id.clone(),
+				next_seq_num,
+			) {
+				log::info!("🐙 fetch_and_update_validator_set: Error: {}", e);
+			}
+			if let Err(e) = Self::get_and_submit_lock_events(block_number, appchain_id, 0, 2) {
+				log::info!("🐙 get_and_submit_lock_events: Error: {}", e);
 			}
 		}
 	}
@@ -565,6 +582,35 @@ pub mod pallet {
 				)
 				.ok_or("🐙 No local accounts accounts available.")?;
 			result.map_err(|()| "🐙 Unable to submit transaction")?;
+
+			Ok(())
+		}
+
+		fn get_and_submit_lock_events(
+			block_number: T::BlockNumber,
+			appchain_id: Vec<u8>,
+			start: u32,
+			limit: u32,
+		) -> Result<(), &'static str> {
+			log::info!("🐙 in get_and_submit_lock_events");
+
+			let events =
+				Self::get_locked_events(T::RELAY_CONTRACT.to_vec(), appchain_id, start, limit)
+					.map_err(|_| "Failed to get lock events")?;
+			log::info!("🐙 new lock events: {:#?}", events);
+
+			// // -- Sign using any account
+			// let (_, result) = Signer::<T, T::AuthorityId>::any_account()
+			// 	.send_unsigned_transaction(
+			// 		|account| ValidatorSetPayload {
+			// 			public: account.public.clone(),
+			// 			block_number,
+			// 			val_set: next_val_set.clone(),
+			// 		},
+			// 		|payload, signature| Call::submit_validator_set(payload, signature),
+			// 	)
+			// 	.ok_or("🐙 No local accounts accounts available.")?;
+			// result.map_err(|()| "🐙 Unable to submit transaction")?;
 
 			Ok(())
 		}
