@@ -102,12 +102,8 @@ pub struct ValidatorSet<AccountId> {
 
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct LockEvent<AccountId> {
-	/// The sequence number of this set on the motherchain.
-	#[serde(rename = "seq_num")]
-	sequence_number: u32,
 	#[serde(with = "serde_bytes")]
 	token_id: Vec<u8>,
-	/// Validators in this set.
 	#[serde(deserialize_with = "deserialize_from_hex_str")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	receiver_id: AccountId,
@@ -128,7 +124,7 @@ where
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub enum Observation<AccountId> {
 	UpdateValidatorSet(ValidatorSet<AccountId>),
-	LockToken,
+	LockToken(LockEvent<AccountId>),
 }
 
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
@@ -468,7 +464,9 @@ pub mod pallet {
 
 						<NextValidatorSet<T>>::put(val_set);
 					}
-					Observation::LockToken => {}
+					Observation::LockToken(event) => {
+						// Self::mint_inner(0, vec![], event.receiver_id, 10);
+					}
 				}
 
 				let obs = <Observations<T>>::get(payload.fact_sequence);
@@ -502,13 +500,8 @@ pub mod pallet {
 			receiver: <T::Lookup as StaticLookup>::Source,
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
-			// TODO
 			ensure_root(origin)?;
-			let receiver = T::Lookup::lookup(receiver)?;
-			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
-			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
-
-			Ok(().into())
+			Self::mint_inner(asset_id, sender_id, receiver, amount)
 		}
 
 		#[pallet::weight(0)]
@@ -657,7 +650,8 @@ pub mod pallet {
 						public: account.public.clone(),
 						block_number,
 						fact_sequence: current_fact_sequence,
-						observation: Observation::LockToken,
+						// TODO
+						observation: Observation::LockToken(events[0].clone()),
 					},
 					|payload, signature| Call::submit_observation(payload, signature),
 				)
@@ -665,6 +659,19 @@ pub mod pallet {
 			result.map_err(|()| "🐙 Unable to submit transaction")?;
 
 			Ok(())
+		}
+
+		fn mint_inner(
+			asset_id: AssetIdOf<T>,
+			sender_id: Vec<u8>,
+			receiver: <T::Lookup as StaticLookup>::Source,
+			amount: AssetBalanceOf<T>,
+		) -> DispatchResultWithPostInfo {
+			let receiver = T::Lookup::lookup(receiver)?;
+			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
+			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
+
+			Ok(().into())
 		}
 
 		fn validate_transaction_parameters(
