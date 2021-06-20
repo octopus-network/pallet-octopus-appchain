@@ -125,17 +125,22 @@ where
 	amount_str.parse::<S>().map_err(|e| de::Error::custom(e.to_string()))
 }
 
-/// Payload used by this crate to hold validator set
-/// data required to submit a transaction.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct ValidatorSetPayload<Public, BlockNumber, AccountId> {
+pub enum Observation<AccountId> {
+	UpdateValidatorSet(ValidatorSet<AccountId>),
+	LockToken,
+}
+
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct ObservationPayload<Public, BlockNumber, AccountId> {
 	public: Public,
 	block_number: BlockNumber,
-	val_set: ValidatorSet<AccountId>,
+	fact_sequence: u64,
+	observation: Observation<AccountId>,
 }
 
 impl<T: SigningTypes> SignedPayload<T>
-	for ValidatorSetPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>
+	for ObservationPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>
 {
 	fn public(&self) -> T::Public {
 		self.public.clone()
@@ -218,15 +223,24 @@ pub mod pallet {
 	pub type CurrentValidatorSet<T: Config> =
 		StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
-	/// A list of candidate validator sets.
 	#[pallet::storage]
-	pub type CandidateValidatorSets<T: Config> =
-		StorageValue<_, Vec<ValidatorSet<T::AccountId>>, ValueQuery>;
+	pub type NextValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
-	/// A voting record for the index of CandidateValidatorSets.
 	#[pallet::storage]
-	pub type Voters<T: Config> =
-		StorageMap<_, Twox64Concat, u32, Vec<Validator<T::AccountId>>, ValueQuery>;
+	pub type FactSequence<T: Config> = StorageValue<_, u64, ValueQuery>;
+
+	#[pallet::storage]
+	pub type Observations<T: Config> =
+		StorageMap<_, Twox64Concat, u64, Vec<Observation<T::AccountId>>, ValueQuery>;
+
+	#[pallet::storage]
+	pub type Observing<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		Observation<T::AccountId>,
+		Vec<Validator<T::AccountId>>,
+		ValueQuery,
+	>;
 
 	#[pallet::storage]
 	pub type MessageQueue<T: Config> = StorageValue<_, Vec<Message>, ValueQuery>;
@@ -279,9 +293,10 @@ pub mod pallet {
 		WrongSequenceNumber,
 		/// Must be a validator.
 		NotValidator,
-
 		/// Nonce overflow.
 		NonceOverflow,
+		/// Fact sequence overflow.
+		FactSequenceOverflow,
 	}
 
 	#[pallet::hooks]
@@ -322,15 +337,24 @@ pub mod pallet {
 			}
 			log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
 
+			let current_fact_sequence = FactSequence::<T>::get();
+
 			// TODO: refactoring into a unified request
 			if let Err(e) = Self::fetch_and_update_validator_set(
 				block_number,
 				appchain_id.clone(),
+				current_fact_sequence,
 				next_seq_num,
 			) {
 				log::info!("🐙 fetch_and_update_validator_set: Error: {}", e);
 			}
-			if let Err(e) = Self::get_and_submit_lock_events(block_number, appchain_id, 0, 2) {
+			if let Err(e) = Self::get_and_submit_lock_events(
+				block_number,
+				appchain_id,
+				current_fact_sequence,
+				0,
+				2,
+			) {
 				log::info!("🐙 get_and_submit_lock_events: Error: {}", e);
 			}
 		}
@@ -347,7 +371,7 @@ pub mod pallet {
 		/// are being whitelisted and marked as valid.
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			// Firstly let's check that we call the right function.
-			if let Call::submit_validator_set(ref payload, ref signature) = call {
+			if let Call::submit_observation(ref payload, ref signature) = call {
 				let signature_valid =
 					SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone());
 				if !signature_valid {
@@ -355,7 +379,7 @@ pub mod pallet {
 				}
 				Self::validate_transaction_parameters(
 					&payload.block_number,
-					&payload.val_set,
+					payload.fact_sequence,
 					payload.public.clone().into_account(),
 				)
 			} else {
@@ -369,14 +393,14 @@ pub mod pallet {
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// Submit a new set of validators and vote on this set.
+		/// Submit a new observation.
 		///
-		/// If the set already exists in the CandidateValidatorSets, then the only thing
+		/// If the set already exists in the Observations, then the only thing
 		/// to do is vote for this set.
 		#[pallet::weight(0)]
-		pub fn submit_validator_set(
+		pub fn submit_observation(
 			origin: OriginFor<T>,
-			payload: ValidatorSetPayload<
+			payload: ObservationPayload<
 				T::Public,
 				T::BlockNumber,
 				<T as frame_system::Config>::AccountId,
@@ -388,27 +412,6 @@ pub mod pallet {
 			let cur_val_set =
 				<CurrentValidatorSet<T>>::get().ok_or(Error::<T>::NoCurrentValidatorSet)?;
 			let who = payload.public.clone().into_account();
-			//
-			log::info!(
-				"️️️🐙 current_validator_set: {:#?},\nnext_validator_set: {:#?},\nwho: {:?}",
-				cur_val_set,
-				payload.val_set,
-				who
-			);
-			let candidates = <CandidateValidatorSets<T>>::get();
-			for i in 0..candidates.len() {
-				log::info!(
-					"🐙 Candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
-					i,
-					candidates.get(i),
-					<Voters<T>>::get(i as u32)
-				);
-			}
-			//
-			ensure!(
-				payload.val_set.sequence_number == cur_val_set.sequence_number + 1,
-				Error::<T>::WrongSequenceNumber
-			);
 
 			let val = cur_val_set.validators.iter().find(|v| {
 				let id = <pallet_session::Module<T>>::key_owner(
@@ -426,19 +429,64 @@ pub mod pallet {
 				return Err(Error::<T>::NotValidator.into());
 			}
 			let val = val.expect("Validator is valid; qed").clone();
-			Self::add_validator_set(who, val, payload.val_set);
+
 			//
-			log::info!("🐙 after submit_validator_set");
-			let candidates = <CandidateValidatorSets<T>>::get();
-			for i in 0..candidates.len() {
-				log::info!(
-					"🐙 candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
-					i,
-					candidates.get(i),
-					<Voters<T>>::get(i as u32)
-				);
+			log::info!(
+				"️️️🐙 current_validator_set: {:#?},\nobservation: {:#?},\nwho: {:?}",
+				cur_val_set,
+				payload.observation,
+				who
+			);
+			//
+			<Observations<T>>::mutate(payload.fact_sequence, |obs| {
+				let found = obs.iter().any(|o| o == &payload.observation);
+				if !found {
+					obs.push(payload.observation.clone())
+				}
+			});
+			<Observing<T>>::mutate(&payload.observation, |vals| {
+				let found = vals.iter().any(|v| v.id == val.id);
+				if !found {
+					vals.push(val);
+				} else {
+					log::info!("🐙 {:?} submits a duplicate ocw tx", val.id);
+				}
+			});
+
+			let total_weight: u64 = cur_val_set.validators.iter().map(|v| v.weight).sum();
+			let weight: u64 =
+				<Observing<T>>::get(&payload.observation).iter().map(|v| v.weight).sum();
+
+			// TODO 2/3
+			if weight == total_weight {
+				match payload.observation {
+					Observation::UpdateValidatorSet(val_set) => {
+						ensure!(
+							val_set.sequence_number == cur_val_set.sequence_number + 1,
+							Error::<T>::WrongSequenceNumber
+						);
+
+						<NextValidatorSet<T>>::put(val_set);
+					}
+					Observation::LockToken => {}
+				}
+
+				let obs = <Observations<T>>::get(payload.fact_sequence);
+				let _ = obs.iter().map(|o| {
+					<Observing<T>>::remove(o);
+				});
+				<Observations<T>>::remove(payload.fact_sequence);
+
+				FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
+					if let Some(v) = seq.checked_add(1) {
+						*seq = v;
+					} else {
+						return Err(Error::<T>::FactSequenceOverflow.into());
+					}
+
+					Ok(().into())
+				})?;
 			}
-			//
 
 			Ok(().into())
 		}
@@ -559,6 +607,7 @@ pub mod pallet {
 		fn fetch_and_update_validator_set(
 			block_number: T::BlockNumber,
 			appchain_id: Vec<u8>,
+			current_fact_sequence: u64,
 			next_seq_num: u32,
 		) -> Result<(), &'static str> {
 			log::info!("🐙 in fetch_and_update_validator_set");
@@ -573,12 +622,13 @@ pub mod pallet {
 			// -- Sign using any account
 			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
 				.send_unsigned_transaction(
-					|account| ValidatorSetPayload {
+					|account| ObservationPayload {
 						public: account.public.clone(),
 						block_number,
-						val_set: next_val_set.clone(),
+						fact_sequence: current_fact_sequence,
+						observation: Observation::UpdateValidatorSet(next_val_set.clone()),
 					},
-					|payload, signature| Call::submit_validator_set(payload, signature),
+					|payload, signature| Call::submit_observation(payload, signature),
 				)
 				.ok_or("🐙 No local accounts accounts available.")?;
 			result.map_err(|()| "🐙 Unable to submit transaction")?;
@@ -589,6 +639,7 @@ pub mod pallet {
 		fn get_and_submit_lock_events(
 			block_number: T::BlockNumber,
 			appchain_id: Vec<u8>,
+			current_fact_sequence: u64,
 			start: u32,
 			limit: u32,
 		) -> Result<(), &'static str> {
@@ -599,53 +650,26 @@ pub mod pallet {
 					.map_err(|_| "Failed to get lock events")?;
 			log::info!("🐙 new lock events: {:#?}", events);
 
-			// // -- Sign using any account
-			// let (_, result) = Signer::<T, T::AuthorityId>::any_account()
-			// 	.send_unsigned_transaction(
-			// 		|account| ValidatorSetPayload {
-			// 			public: account.public.clone(),
-			// 			block_number,
-			// 			val_set: next_val_set.clone(),
-			// 		},
-			// 		|payload, signature| Call::submit_validator_set(payload, signature),
-			// 	)
-			// 	.ok_or("🐙 No local accounts accounts available.")?;
-			// result.map_err(|()| "🐙 Unable to submit transaction")?;
+			// -- Sign using any account
+			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
+				.send_unsigned_transaction(
+					|account| ObservationPayload {
+						public: account.public.clone(),
+						block_number,
+						fact_sequence: current_fact_sequence,
+						observation: Observation::LockToken,
+					},
+					|payload, signature| Call::submit_observation(payload, signature),
+				)
+				.ok_or("🐙 No local accounts accounts available.")?;
+			result.map_err(|()| "🐙 Unable to submit transaction")?;
 
 			Ok(())
 		}
 
-		/// Add new validator set to the CandidateValidatorSets.
-		fn add_validator_set(
-			who: T::AccountId,
-			val: Validator<<T as frame_system::Config>::AccountId>,
-			new_val_set: ValidatorSet<<T as frame_system::Config>::AccountId>,
-		) {
-			log::info!("🐙 Adding to the voters: {:#?}", new_val_set);
-			let index = 0;
-			<CandidateValidatorSets<T>>::mutate(|val_sets| {
-				// TODO
-				if val_sets.len() == 0 {
-					val_sets.push(new_val_set.clone());
-				}
-			});
-
-			<Voters<T>>::mutate(index, |vals| {
-				let exist = vals.iter().find(|v| v.id == val.id);
-				match exist {
-					Some(id) => {
-						log::info!("🐙 duplicated ocw tx: {:?}", id);
-					}
-					None => vals.push(val),
-				}
-			});
-
-			Self::deposit_event(Event::NewVoterFor(new_val_set, who));
-		}
-
 		fn validate_transaction_parameters(
 			block_number: &T::BlockNumber,
-			val_set: &ValidatorSet<<T as frame_system::Config>::AccountId>,
+			fact_sequence: u64,
 			account_id: <T as frame_system::Config>::AccountId,
 		) -> TransactionValidity {
 			// Let's make sure to reject transactions from the future.
@@ -662,12 +686,12 @@ pub mod pallet {
 			ValidTransaction::with_tag_prefix("OctopusAppchain")
 				// We set base priority to 2**20 and hope it's included before any other
 				// transactions in the pool. Next we tweak the priority depending on the
-				// sequence number of the validator set.
-				.priority(T::UnsignedPriority::get().saturating_add(val_set.sequence_number as _))
+				// sequence of the fact that happened on motherchain.
+				.priority(T::UnsignedPriority::get().saturating_add(fact_sequence))
 				// This transaction does not require anything else to go before into the pool.
 				//.and_requires()
 				// One can only vote on the validator set with the same seq_num once.
-				.and_provides((val_set.sequence_number, account_id))
+				.and_provides((fact_sequence, account_id))
 				// The transaction is only valid for next 5 blocks. After that it's
 				// going to be revalidated by the pool.
 				.longevity(5)
@@ -732,46 +756,19 @@ pub mod pallet {
 				<frame_system::Pallet<T>>::block_number(),
 				new_index
 			);
-			if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
-				//
-				log::info!("🐙 current_validator_set: {:#?}", cur_val_set);
-				let candidates = <CandidateValidatorSets<T>>::get();
-				for i in 0..candidates.len() {
-					log::info!(
-						"🐙 candidate_index: {:?},\ncandidate: {:#?},\nvoters: {:#?}",
-						i,
-						candidates.get(i),
-						<Voters<T>>::get(i as u32)
-					);
+
+			let next_val_set = <NextValidatorSet<T>>::get();
+			match next_val_set {
+				Some(new_val_set) => {
+					<CurrentValidatorSet<T>>::put(new_val_set.clone());
+					<CurrentValidatorSet<T>>::kill();
+					log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
+					Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
 				}
-				//
-				let total_weight: u64 = cur_val_set.validators.iter().map(|v| v.weight).sum();
-				// TODO
-				let next_val_set = <Voters<T>>::iter()
-					.find(|(_k, v)| v.iter().map(|x| x.weight).sum::<u64>() == total_weight)
-					.map(|(index, _v)| {
-						log::info!("🐙 total_weight: {}, index: {}", total_weight, index);
-						<CandidateValidatorSets<T>>::get()[index as usize].clone()
-					});
-				match next_val_set {
-					Some(new_val_set) => {
-						// TODO: transaction
-						<CurrentValidatorSet<T>>::put(new_val_set.clone());
-						let candidates = <CandidateValidatorSets<T>>::get();
-						for i in 0..candidates.len() {
-							<Voters<T>>::remove(i as u32);
-						}
-						<CandidateValidatorSets<T>>::kill();
-						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
-						Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
-					}
-					None => {
-						log::info!("🐙 validator set has't changed");
-						None
-					}
+				None => {
+					log::info!("🐙 validator set has't changed");
+					None
 				}
-			} else {
-				None
 			}
 		}
 
