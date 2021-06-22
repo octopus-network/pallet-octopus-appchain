@@ -27,7 +27,7 @@ use sp_std::prelude::*;
 
 pub use pallet::*;
 
-mod motherchain;
+mod main_chain;
 
 #[cfg(test)]
 mod mock;
@@ -72,7 +72,7 @@ pub struct Validator<AccountId> {
 	#[serde(deserialize_with = "deserialize_from_hex_str")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	id: AccountId,
-	/// The weight of this validator in motherchain's staking system.
+	/// The weight of this validator in main chain's staking system.
 	// TODO: String -> u128
 	weight: u64,
 }
@@ -92,7 +92,7 @@ where
 /// The validator set of appchain.
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct ValidatorSet<AccountId> {
-	/// The sequence number of this set on the motherchain.
+	/// The sequence number of this set on the main_chain.
 	#[serde(rename = "seq_num")]
 	sequence_number: u32,
 	/// Validators in this set.
@@ -196,7 +196,7 @@ pub mod pallet {
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
 
-		/// The account_id/address of the relay contract on the motherchain.
+		/// The account_id/address of the relay contract on the main chain.
 		const RELAY_CONTRACT: &'static [u8];
 	}
 
@@ -314,7 +314,7 @@ pub mod pallet {
 		fn offchain_worker(block_number: T::BlockNumber) {
 			let appchain_id = Self::appchain_id();
 			if appchain_id.len() == 0 {
-				// detach appchain from motherchain when appchain_id == ""
+				// detach appchain from main chain when appchain_id == ""
 				return;
 			}
 			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
@@ -428,8 +428,8 @@ pub mod pallet {
 
 			//
 			log::info!(
-				"️️️🐙 current_validator_set: {:#?},\nobservation: {:#?},\nwho: {:?}",
-				cur_val_set,
+				"️️️🐙 fact_sequence: {:?},\nobservation: {:#?},\nwho: {:?}",
+				payload.fact_sequence,
 				payload.observation,
 				who
 			);
@@ -452,6 +452,11 @@ pub mod pallet {
 			let total_weight: u64 = cur_val_set.validators.iter().map(|v| v.weight).sum();
 			let weight: u64 =
 				<Observing<T>>::get(&payload.observation).iter().map(|v| v.weight).sum();
+			//
+			log::info!("️️️🐙 observations: {:#?}", <Observations<T>>::get(payload.fact_sequence));
+			log::info!("️️️🐙 observer: {:#?}", <Observing<T>>::get(&payload.observation));
+			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
+			//
 
 			// TODO 2/3
 			if weight == total_weight {
@@ -464,15 +469,15 @@ pub mod pallet {
 
 						<NextValidatorSet<T>>::put(val_set);
 					}
-					Observation::LockToken(event) => {
+					Observation::LockToken(_) => {
 						// Self::mint_inner(0, vec![], event.receiver_id, 10);
 					}
 				}
 
 				let obs = <Observations<T>>::get(payload.fact_sequence);
-				let _ = obs.iter().map(|o| {
+				for o in obs.iter() {
 					<Observing<T>>::remove(o);
-				});
+				}
 				<Observations<T>>::remove(payload.fact_sequence);
 
 				FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
@@ -693,7 +698,7 @@ pub mod pallet {
 			ValidTransaction::with_tag_prefix("OctopusAppchain")
 				// We set base priority to 2**20 and hope it's included before any other
 				// transactions in the pool. Next we tweak the priority depending on the
-				// sequence of the fact that happened on motherchain.
+				// sequence of the fact that happened on main chain.
 				.priority(T::UnsignedPriority::get().saturating_add(fact_sequence))
 				// This transaction does not require anything else to go before into the pool.
 				//.and_requires()
@@ -768,7 +773,7 @@ pub mod pallet {
 			match next_val_set {
 				Some(new_val_set) => {
 					<CurrentValidatorSet<T>>::put(new_val_set.clone());
-					<CurrentValidatorSet<T>>::kill();
+					<NextValidatorSet<T>>::kill();
 					log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
 					Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
 				}
