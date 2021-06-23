@@ -69,24 +69,21 @@ type AssetIdOf<T> =
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Validator<AccountId> {
 	/// The validator's id.
-	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(deserialize_with = "deserialize_from_bytes")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	id: AccountId,
 	/// The weight of this validator in main chain's staking system.
-	// TODO: String -> u128
-	weight: u64,
+	#[serde(deserialize_with = "deserialize_from_str")]
+	weight: u128,
 }
 
-fn deserialize_from_hex_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
+fn deserialize_from_bytes<'de, S, D>(deserializer: D) -> Result<S, D::Error>
 where
 	S: Decode,
 	D: Deserializer<'de>,
 {
-	let account_id_str: String = Deserialize::deserialize(deserializer)?;
-	// TODO
-	let account_id_hex =
-		hex::decode(&account_id_str[2..]).map_err(|e| de::Error::custom(e.to_string()))?;
-	S::decode(&mut &account_id_hex[..]).map_err(|e| de::Error::custom(e.to_string()))
+	let account_id_bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+	S::decode(&mut &account_id_bytes[..]).map_err(|e| de::Error::custom(e.to_string()))
 }
 
 /// The validator set of appchain.
@@ -104,7 +101,7 @@ pub struct ValidatorSet<AccountId> {
 pub struct LockEvent<AccountId> {
 	#[serde(with = "serde_bytes")]
 	token_id: Vec<u8>,
-	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(deserialize_with = "deserialize_from_bytes")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	receiver_id: AccountId,
 	#[serde(deserialize_with = "deserialize_from_str")]
@@ -247,7 +244,7 @@ pub mod pallet {
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
-		pub validators: Vec<(T::AccountId, u64)>,
+		pub validators: Vec<(T::AccountId, u128)>,
 	}
 
 	#[cfg(feature = "std")]
@@ -324,34 +321,21 @@ pub mod pallet {
 				return;
 			}
 
-			let next_seq_num;
-			if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
-				next_seq_num = cur_val_set.sequence_number + 1;
-			} else {
-				log::info!("🐙 CurrentValidatorSet must be initialized.");
-				return;
-			}
-			log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
+			// let next_seq_num;
+			// if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
+			// 	next_seq_num = cur_val_set.sequence_number + 1;
+			// } else {
+			// 	log::info!("🐙 CurrentValidatorSet must be initialized.");
+			// 	return;
+			// }
+			// log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
 
 			let current_fact_sequence = FactSequence::<T>::get();
 
-			// TODO: refactoring into a unified request
-			if let Err(e) = Self::fetch_and_update_validator_set(
-				block_number,
-				appchain_id.clone(),
-				current_fact_sequence,
-				next_seq_num,
-			) {
-				log::info!("🐙 fetch_and_update_validator_set: Error: {}", e);
-			}
-			if let Err(e) = Self::get_and_submit_lock_events(
-				block_number,
-				appchain_id,
-				current_fact_sequence,
-				0,
-				2,
-			) {
-				log::info!("🐙 get_and_submit_lock_events: Error: {}", e);
+			if let Err(e) =
+				Self::observing_main_chain(block_number, appchain_id.clone(), current_fact_sequence)
+			{
+				log::info!("🐙 observing_main_chain: Error: {}", e);
 			}
 		}
 	}
@@ -449,8 +433,8 @@ pub mod pallet {
 				}
 			});
 
-			let total_weight: u64 = cur_val_set.validators.iter().map(|v| v.weight).sum();
-			let weight: u64 =
+			let total_weight: u128 = cur_val_set.validators.iter().map(|v| v.weight).sum();
+			let weight: u128 =
 				<Observing<T>>::get(&payload.observation).iter().map(|v| v.weight).sum();
 			//
 			log::info!("️️️🐙 observations: {:#?}", <Observations<T>>::get(payload.fact_sequence));
@@ -535,7 +519,7 @@ pub mod pallet {
 	}
 
 	impl<T: Config> Pallet<T> {
-		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u64)>) {
+		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u128)>) {
 			if vals.len() != 0 {
 				assert!(
 					<CurrentValidatorSet<T>>::get().is_none(),
@@ -602,51 +586,27 @@ pub mod pallet {
 			}
 		}
 
-		fn fetch_and_update_validator_set(
+		fn observing_main_chain(
 			block_number: T::BlockNumber,
 			appchain_id: Vec<u8>,
 			current_fact_sequence: u64,
-			next_seq_num: u32,
 		) -> Result<(), &'static str> {
-			log::info!("🐙 in fetch_and_update_validator_set");
+			log::info!("🐙 in observing_main_chain");
 
-			// Make an external HTTP request to fetch the current validator set.
+			// Make an external HTTP request to fetch observations from main chain.
 			// Note this call will block until response is received.
-			let next_val_set =
-				Self::fetch_validator_set(T::RELAY_CONTRACT.to_vec(), appchain_id, next_seq_num)
-					.map_err(|_| "Failed to fetch validator set")?;
-			log::info!("🐙 new validator set: {:#?}", next_val_set);
+			// TODO: limit
+			let obs = Self::fetch_observations(
+				T::RELAY_CONTRACT.to_vec(),
+				appchain_id,
+				current_fact_sequence,
+				1,
+			)
+			.map_err(|_| "Failed to fetch observations")?;
 
-			// -- Sign using any account
-			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
-				.send_unsigned_transaction(
-					|account| ObservationPayload {
-						public: account.public.clone(),
-						block_number,
-						fact_sequence: current_fact_sequence,
-						observation: Observation::UpdateValidatorSet(next_val_set.clone()),
-					},
-					|payload, signature| Call::submit_observation(payload, signature),
-				)
-				.ok_or("🐙 No local accounts accounts available.")?;
-			result.map_err(|()| "🐙 Unable to submit transaction")?;
-
-			Ok(())
-		}
-
-		fn get_and_submit_lock_events(
-			block_number: T::BlockNumber,
-			appchain_id: Vec<u8>,
-			current_fact_sequence: u64,
-			start: u32,
-			limit: u32,
-		) -> Result<(), &'static str> {
-			log::info!("🐙 in get_and_submit_lock_events");
-
-			let events =
-				Self::get_locked_events(T::RELAY_CONTRACT.to_vec(), appchain_id, start, limit)
-					.map_err(|_| "Failed to get lock events")?;
-			log::info!("🐙 new lock events: {:#?}", events);
+			if obs.len() == 0 {
+				return Ok(());
+			}
 
 			// -- Sign using any account
 			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
@@ -656,7 +616,7 @@ pub mod pallet {
 						block_number,
 						fact_sequence: current_fact_sequence,
 						// TODO
-						observation: Observation::LockToken(events[0].clone()),
+						observation: obs[0].clone(),
 					},
 					|payload, signature| Call::submit_observation(payload, signature),
 				)
