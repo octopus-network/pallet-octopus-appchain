@@ -130,6 +130,15 @@ pub enum Observation<AccountId> {
 	LockToken(LockEvent<AccountId>),
 }
 
+impl<AccountId> Observation<AccountId> {
+	fn sequence_number(&self) -> u64 {
+		match self {
+			Observation::UpdateValidatorSet(val_set) => val_set.sequence_number,
+			Observation::LockToken(event) => event.sequence_number,
+		}
+	}
+}
+
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct ObservationPayload<Public, BlockNumber, AccountId> {
 	public: Public,
@@ -226,7 +235,7 @@ pub mod pallet {
 	pub type NextValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
 	#[pallet::storage]
-	pub type FactSequence<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub type FactSequence<T: Config> = StorageValue<_, u64, OptionQuery>;
 
 	#[pallet::storage]
 	pub type Observations<T: Config> =
@@ -242,6 +251,9 @@ pub mod pallet {
 	>;
 
 	#[pallet::storage]
+	pub type AssetId<T: Config> = StorageMap<_, Twox64Concat, Vec<u8>, AssetIdOf<T>, OptionQuery>;
+
+	#[pallet::storage]
 	pub type MessageQueue<T: Config> = StorageValue<_, Vec<Message>, ValueQuery>;
 
 	#[pallet::storage]
@@ -251,12 +263,13 @@ pub mod pallet {
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
 		pub validators: Vec<(T::AccountId, u128)>,
+		pub asset_id: Vec<(String, AssetIdOf<T>)>,
 	}
 
 	#[cfg(feature = "std")]
 	impl<T: Config> Default for GenesisConfig<T> {
 		fn default() -> Self {
-			Self { appchain_id: String::new(), validators: Vec::new() }
+			Self { appchain_id: String::new(), validators: Vec::new(), asset_id: Vec::new() }
 		}
 	}
 
@@ -265,6 +278,10 @@ pub mod pallet {
 		fn build(&self) {
 			<AppchainId<T>>::put(self.appchain_id.as_bytes());
 			Pallet::<T>::initialize_validators(&self.validators);
+
+			for (token_id, id) in self.asset_id.iter() {
+				<AssetId<T>>::insert(token_id.as_bytes(), id);
+			}
 		}
 	}
 
@@ -288,8 +305,8 @@ pub mod pallet {
 	pub enum Error<T> {
 		/// No CurrentValidatorSet.
 		NoCurrentValidatorSet,
-		/// The sequence number of new validator set was wrong.
-		WrongSequenceNumber,
+		/// The set id of new validator set was wrong.
+		WrongSetId,
 		/// Must be a validator.
 		NotValidator,
 		/// Nonce overflow.
@@ -327,20 +344,7 @@ pub mod pallet {
 				return;
 			}
 
-			// let next_seq_num;
-			// if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
-			// 	next_seq_num = cur_val_set.sequence_number + 1;
-			// } else {
-			// 	log::info!("🐙 CurrentValidatorSet must be initialized.");
-			// 	return;
-			// }
-			// log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
-
-			let current_fact_sequence = FactSequence::<T>::get();
-
-			if let Err(e) =
-				Self::observing_main_chain(block_number, appchain_id.clone(), current_fact_sequence)
-			{
+			if let Err(e) = Self::observing_main_chain(block_number, appchain_id.clone()) {
 				log::info!("🐙 observing_main_chain: Error: {}", e);
 			}
 		}
@@ -417,14 +421,9 @@ pub mod pallet {
 			let val = val.expect("Validator is valid; qed").clone();
 
 			//
-			log::info!(
-				"️️️🐙 fact_sequence: {:?},\nobservation: {:#?},\nwho: {:?}",
-				payload.fact_sequence,
-				payload.observation,
-				who
-			);
+			log::info!("️️️🐙 observation: {:#?},\nwho: {:?}", payload.observation, who);
 			//
-			<Observations<T>>::mutate(payload.fact_sequence, |obs| {
+			<Observations<T>>::mutate(payload.observation.sequence_number(), |obs| {
 				let found = obs.iter().any(|o| o == &payload.observation);
 				if !found {
 					obs.push(payload.observation.clone())
@@ -443,38 +442,51 @@ pub mod pallet {
 			let weight: u128 =
 				<Observing<T>>::get(&payload.observation).iter().map(|v| v.weight).sum();
 			//
-			log::info!("️️️🐙 observations: {:#?}", <Observations<T>>::get(payload.fact_sequence));
+			log::info!(
+				"️️️🐙 observations: {:#?}",
+				<Observations<T>>::get(payload.observation.sequence_number())
+			);
 			log::info!("️️️🐙 observer: {:#?}", <Observing<T>>::get(&payload.observation));
 			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
 			//
 
 			// TODO 2/3
 			if weight == total_weight {
+				let seq_num = payload.observation.sequence_number();
 				match payload.observation {
 					Observation::UpdateValidatorSet(val_set) => {
-						ensure!(
-							val_set.sequence_number == cur_val_set.sequence_number + 1,
-							Error::<T>::WrongSequenceNumber
-						);
+						ensure!(val_set.set_id == cur_val_set.set_id + 1, Error::<T>::WrongSetId);
 
 						<NextValidatorSet<T>>::put(val_set);
 					}
-					Observation::LockToken(_) => {
-						// Self::mint_inner(0, vec![], event.receiver_id, 10);
+					Observation::LockToken(event) => {
+						if let Some(asset_id) = <AssetId<T>>::get(event.token_id) {
+							Self::mint_inner(
+								asset_id,
+								vec![],
+								event.receiver_id,
+								(event.amount as u32).into(),
+							)?;
+						}
 					}
 				}
 
-				let obs = <Observations<T>>::get(payload.fact_sequence);
+				let obs = <Observations<T>>::get(seq_num);
 				for o in obs.iter() {
 					<Observing<T>>::remove(o);
 				}
-				<Observations<T>>::remove(payload.fact_sequence);
+				<Observations<T>>::remove(seq_num);
 
 				FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
-					if let Some(v) = seq.checked_add(1) {
-						*seq = v;
-					} else {
-						return Err(Error::<T>::FactSequenceOverflow.into());
+					match seq.take() {
+						Some(cur_seq) => {
+							if let Some(v) = cur_seq.checked_add(1) {
+								*seq = Some(v);
+							} else {
+								return Err(Error::<T>::FactSequenceOverflow.into());
+							}
+						}
+						None => *seq = Some(0),
 					}
 
 					Ok(().into())
@@ -496,6 +508,8 @@ pub mod pallet {
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
 			ensure_root(origin)?;
+
+			let receiver = T::Lookup::lookup(receiver)?;
 			Self::mint_inner(asset_id, sender_id, receiver, amount)
 		}
 
@@ -596,20 +610,21 @@ pub mod pallet {
 		fn observing_main_chain(
 			block_number: T::BlockNumber,
 			appchain_id: Vec<u8>,
-			current_fact_sequence: u64,
 		) -> Result<(), &'static str> {
 			log::info!("🐙 in observing_main_chain");
 
-			// Make an external HTTP request to fetch observations from main chain.
+			let mut next_fact_sequence = 0;
+			if let Some(cur_seq) = FactSequence::<T>::get() {
+				next_fact_sequence = cur_seq + 1;
+			}
+			log::info!("🐙 next_fact_sequence: {}", next_fact_sequence);
+
+			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
 			// TODO: limit
-			let obs = Self::fetch_observations(
-				T::RELAY_CONTRACT.to_vec(),
-				appchain_id,
-				current_fact_sequence,
-				1,
-			)
-			.map_err(|_| "Failed to fetch observations")?;
+			let obs =
+				Self::fetch_facts(T::RELAY_CONTRACT.to_vec(), appchain_id, next_fact_sequence, 1)
+					.map_err(|_| "Failed to fetch facts")?;
 
 			if obs.len() == 0 {
 				return Ok(());
@@ -621,7 +636,7 @@ pub mod pallet {
 					|account| ObservationPayload {
 						public: account.public.clone(),
 						block_number,
-						fact_sequence: current_fact_sequence,
+						fact_sequence: next_fact_sequence,
 						// TODO
 						observation: obs[0].clone(),
 					},
@@ -636,10 +651,9 @@ pub mod pallet {
 		fn mint_inner(
 			asset_id: AssetIdOf<T>,
 			sender_id: Vec<u8>,
-			receiver: <T::Lookup as StaticLookup>::Source,
+			receiver: T::AccountId,
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
-			let receiver = T::Lookup::lookup(receiver)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
 			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
 

@@ -16,8 +16,8 @@ struct ResponseResult {
 }
 
 impl<T: Config> Pallet<T> {
-	/// Fetch the observations of a specified appchain from relay contract.
-	pub(super) fn fetch_observations(
+	/// Fetch the facts of a specified appchain from relay contract.
+	pub(super) fn fetch_facts(
 		relay_contract: Vec<u8>,
 		appchain_id: Vec<u8>,
 		start: u64,
