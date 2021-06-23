@@ -89,9 +89,10 @@ where
 /// The validator set of appchain.
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct ValidatorSet<AccountId> {
-	/// The sequence number of this set on the main_chain.
+	/// The sequence number of this fact on the main_chain.
 	#[serde(rename = "seq_num")]
-	sequence_number: u32,
+	sequence_number: u64,
+	set_id: u32,
 	/// Validators in this set.
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	validators: Vec<Validator<AccountId>>,
@@ -99,6 +100,9 @@ pub struct ValidatorSet<AccountId> {
 
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct LockEvent<AccountId> {
+	/// The sequence number of this fact on the main_chain.
+	#[serde(rename = "seq_num")]
+	sequence_number: u64,
 	#[serde(with = "serde_bytes")]
 	token_id: Vec<u8>,
 	#[serde(deserialize_with = "deserialize_from_bytes")]
@@ -118,9 +122,11 @@ where
 	amount_str.parse::<S>().map_err(|e| de::Error::custom(e.to_string()))
 }
 
-#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub enum Observation<AccountId> {
+	#[serde(bound(deserialize = "AccountId: Decode"))]
 	UpdateValidatorSet(ValidatorSet<AccountId>),
+	#[serde(bound(deserialize = "AccountId: Decode"))]
 	LockToken(LockEvent<AccountId>),
 }
 
@@ -526,7 +532,8 @@ pub mod pallet {
 					"CurrentValidatorSet is already initialized!"
 				);
 				<CurrentValidatorSet<T>>::put(ValidatorSet {
-					sequence_number: 0,
+					sequence_number: 0, // unused
+					set_id: 0,
 					validators: vals
 						.iter()
 						.map(|x| Validator { id: x.0.clone(), weight: x.1 })

@@ -92,9 +92,9 @@ impl<T: Config> Pallet<T> {
 		// TODO
 		let json_response: Response = serde_json::from_slice(&body).unwrap();
 		log::info!("🐙 json_response: {:?}", json_response);
-		// let val_set: ValidatorSet<<T as frame_system::Config>::AccountId> =
-		// 	serde_json::from_slice(&json_response.result.result).unwrap();
-		let obs = vec![];
+
+		let obs: Vec<Observation<<T as frame_system::Config>::AccountId>> =
+			serde_json::from_slice(&json_response.result.result).unwrap();
 
 		log::info!("🐙 Got observations: {:?}", obs);
 
