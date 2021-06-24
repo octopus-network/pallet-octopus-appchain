@@ -6,6 +6,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use codec::{Decode, Encode};
 use frame_support::traits::OneSessionHandler;
 use frame_support::{traits::tokens::fungibles, transactional};
@@ -13,17 +14,20 @@ use frame_system::offchain::AppCrypto;
 use frame_system::offchain::{
 	CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer, SigningTypes,
 };
-use lite_json::json::JsonValue;
-use sp_core::crypto::KeyTypeId;
+use serde::{de, Deserialize, Deserializer};
+use sp_core::{crypto::KeyTypeId, H256};
+use sp_io::offchain_index;
 use sp_runtime::traits::StaticLookup;
 use sp_runtime::{
 	offchain::{http, storage::StorageValueRef, Duration},
-	traits::{Convert, IdentifyAccount},
-	RuntimeDebug,
+	traits::{Convert, Hash, IdentifyAccount, Keccak256},
+	DigestItem, RuntimeDebug,
 };
 use sp_std::prelude::*;
 
 pub use pallet::*;
+
+mod main_chain;
 
 #[cfg(test)]
 mod mock;
@@ -55,6 +59,9 @@ mod crypto {
 /// Identity of an appchain authority.
 pub type AuthorityId = crypto::Public;
 
+type AssetId = u32;
+type AssetBalance = u128;
+
 type AssetBalanceOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::Balance;
 
@@ -62,38 +69,111 @@ type AssetIdOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::AssetId;
 
 /// Validator of appchain.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Validator<AccountId> {
 	/// The validator's id.
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(bound(deserialize = "AccountId: Decode"))]
 	id: AccountId,
-	/// The weight of this validator in motherchain's staking system.
-	weight: u64,
+	/// The weight of this validator in main chain's staking system.
+	#[serde(deserialize_with = "deserialize_from_str")]
+	weight: u128,
+}
+
+fn deserialize_from_hex_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
+where
+	S: Decode,
+	D: Deserializer<'de>,
+{
+	let account_id_str: String = Deserialize::deserialize(deserializer)?;
+	let account_id_hex =
+		hex::decode(&account_id_str[2..]).map_err(|e| de::Error::custom(e.to_string()))?;
+	S::decode(&mut &account_id_hex[..]).map_err(|e| de::Error::custom(e.to_string()))
 }
 
 /// The validator set of appchain.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct ValidatorSet<AccountId> {
-	/// The sequence number of this set on the motherchain.
+	/// The sequence number of this fact on the main_chain.
+	#[serde(rename = "seq_num")]
 	sequence_number: u32,
+	set_id: u32,
 	/// Validators in this set.
+	#[serde(bound(deserialize = "AccountId: Decode"))]
 	validators: Vec<Validator<AccountId>>,
 }
 
-/// Payload used by this crate to hold validator set
-/// data required to submit a transaction.
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct LockEvent<AccountId> {
+	/// The sequence number of this fact on the main_chain.
+	#[serde(rename = "seq_num")]
+	sequence_number: u32,
+	#[serde(with = "serde_bytes")]
+	token_id: Vec<u8>,
+	#[serde(with = "serde_bytes")]
+	sender_id: Vec<u8>,
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	receiver: AccountId,
+	#[serde(deserialize_with = "deserialize_from_str")]
+	amount: u128,
+}
+
+pub fn deserialize_from_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
+where
+	S: sp_std::str::FromStr,
+	D: Deserializer<'de>,
+	<S as sp_std::str::FromStr>::Err: ToString,
+{
+	let amount_str: String = Deserialize::deserialize(deserializer)?;
+	amount_str.parse::<S>().map_err(|e| de::Error::custom(e.to_string()))
+}
+
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub enum Observation<AccountId> {
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	UpdateValidatorSet(ValidatorSet<AccountId>),
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	LockToken(LockEvent<AccountId>),
+}
+
+impl<AccountId> Observation<AccountId> {
+	fn sequence_number(&self) -> u32 {
+		match self {
+			Observation::UpdateValidatorSet(val_set) => val_set.sequence_number,
+			Observation::LockToken(event) => event.sequence_number,
+		}
+	}
+}
+
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct ValidatorSetPayload<Public, BlockNumber, AccountId> {
+pub struct ObservationPayload<Public, BlockNumber, AccountId> {
 	public: Public,
 	block_number: BlockNumber,
-	val_set: ValidatorSet<AccountId>,
+	fact_sequence: u64,
+	observation: Observation<AccountId>,
 }
 
 impl<T: SigningTypes> SignedPayload<T>
-	for ValidatorSetPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>
+	for ObservationPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>
 {
 	fn public(&self) -> T::Public {
 		self.public.clone()
 	}
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct XTransferPayload {
+	pub token_id: Vec<u8>,
+	pub sender: Vec<u8>,
+	pub receiver_id: Vec<u8>,
+	pub amount: u128,
+}
+
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct Message {
+	nonce: u64,
+	payload: Vec<u8>,
 }
 
 #[frame_support::pallet]
@@ -116,7 +196,11 @@ pub mod pallet {
 		/// The overarching dispatch call type.
 		type Call: From<Call<Self>>;
 
-		type Assets: fungibles::Mutate<<Self as frame_system::Config>::AccountId>;
+		type Assets: fungibles::Mutate<
+			<Self as frame_system::Config>::AccountId,
+			AssetId = AssetId,
+			Balance = AssetBalance,
+		>;
 
 		// Configuration parameters
 
@@ -135,7 +219,7 @@ pub mod pallet {
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
 
-		/// The account_id/address of the relay contract on the motherchain.
+		/// The account_id/address of the relay contract on the main chain.
 		const RELAY_CONTRACT: &'static [u8];
 	}
 
@@ -158,20 +242,40 @@ pub mod pallet {
 	pub type CurrentValidatorSet<T: Config> =
 		StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
-	/// A list of candidate validator sets.
 	#[pallet::storage]
-	pub type CandidateValidatorSets<T: Config> =
-		StorageValue<_, Vec<ValidatorSet<T::AccountId>>, ValueQuery>;
+	pub type NextValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
-	/// A voting record for the index of CandidateValidatorSets.
 	#[pallet::storage]
-	pub type Voters<T: Config> =
-		StorageMap<_, Twox64Concat, u32, Vec<Validator<T::AccountId>>, ValueQuery>;
+	pub type FactSequence<T: Config> = StorageValue<_, u64, OptionQuery>;
+
+	#[pallet::storage]
+	pub type Observations<T: Config> =
+		StorageMap<_, Twox64Concat, u32, Vec<Observation<T::AccountId>>, ValueQuery>;
+
+	#[pallet::storage]
+	pub type Observing<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		Observation<T::AccountId>,
+		Vec<Validator<T::AccountId>>,
+		ValueQuery,
+	>;
+
+	#[pallet::storage]
+	pub type AssetIdByName<T: Config> =
+		StorageMap<_, Twox64Concat, Vec<u8>, AssetIdOf<T>, ValueQuery>;
+
+	#[pallet::storage]
+	pub type MessageQueue<T: Config> = StorageValue<_, Vec<Message>, ValueQuery>;
+
+	#[pallet::storage]
+	pub type Nonce<T: Config> = StorageValue<_, u64, ValueQuery>;
 
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
-		pub validators: Vec<(T::AccountId, u64)>,
+		pub validators: Vec<(T::AccountId, u128)>,
+		pub asset_id_by_name: Vec<(String, AssetIdOf<T>)>,
 	}
 
 	#[cfg(feature = "std")]
@@ -180,6 +284,7 @@ pub mod pallet {
 			Self {
 				appchain_id: String::new(),
 				validators: Vec::new(),
+				asset_id_by_name: Vec::new(),
 			}
 		}
 	}
@@ -189,6 +294,10 @@ pub mod pallet {
 		fn build(&self) {
 			<AppchainId<T>>::put(self.appchain_id.as_bytes());
 			Pallet::<T>::initialize_validators(&self.validators);
+
+			for (token_id, id) in self.asset_id_by_name.iter() {
+				<AssetIdByName<T>>::insert(token_id.as_bytes(), id);
+			}
 		}
 	}
 
@@ -212,14 +321,25 @@ pub mod pallet {
 	pub enum Error<T> {
 		/// No CurrentValidatorSet.
 		NoCurrentValidatorSet,
-		/// The sequence number of new validator set was wrong.
-		WrongSequenceNumber,
+		/// The set id of new validator set was wrong.
+		WrongSetId,
 		/// Must be a validator.
 		NotValidator,
+		/// Nonce overflow.
+		NonceOverflow,
+		/// Fact sequence overflow.
+		FactSequenceOverflow,
+		/// Wrong Asset Id.
+		WrongAssetId,
 	}
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+		/// Initialization
+		fn on_initialize(now: BlockNumberFor<T>) -> Weight {
+			Self::commit()
+		}
+
 		/// Offchain Worker entry point.
 		///
 		/// By implementing `fn offchain_worker` you declare a new offchain worker.
@@ -232,31 +352,18 @@ pub mod pallet {
 		fn offchain_worker(block_number: T::BlockNumber) {
 			let appchain_id = Self::appchain_id();
 			if appchain_id.len() == 0 {
-				// detach appchain from motherchain when appchain_id == ""
+				// detach appchain from main chain when appchain_id == ""
 				return;
 			}
 			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
-			log::info!(
-				"🐙 Current block: {:?} (parent hash: {:?})",
-				block_number,
-				parent_hash
-			);
+			log::info!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
 			if !Self::should_send(block_number) {
 				return;
 			}
 
-			let next_seq_num;
-			if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
-				next_seq_num = cur_val_set.sequence_number + 1;
-			} else {
-				log::info!("🐙 CurrentValidatorSet must be initialized.");
-				return;
-			}
-			log::info!("🐙 Next validator set sequenc number: {}", next_seq_num);
-
-			if let Err(e) = Self::fetch_and_update_validator_set(block_number, next_seq_num) {
-				log::info!("🐙 Error: {}", e);
+			if let Err(e) = Self::observing_main_chain(block_number, appchain_id.clone()) {
+				log::info!("🐙 observing_main_chain: Error: {}", e);
 			}
 		}
 	}
@@ -272,7 +379,7 @@ pub mod pallet {
 		/// are being whitelisted and marked as valid.
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			// Firstly let's check that we call the right function.
-			if let Call::submit_validator_set(ref payload, ref signature) = call {
+			if let Call::submit_observation(ref payload, ref signature) = call {
 				let signature_valid =
 					SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone());
 				if !signature_valid {
@@ -280,7 +387,7 @@ pub mod pallet {
 				}
 				Self::validate_transaction_parameters(
 					&payload.block_number,
-					&payload.val_set,
+					payload.fact_sequence,
 					payload.public.clone().into_account(),
 				)
 			} else {
@@ -294,14 +401,14 @@ pub mod pallet {
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// Submit a new set of validators and vote on this set.
+		/// Submit a new observation.
 		///
-		/// If the set already exists in the CandidateValidatorSets, then the only thing
+		/// If the set already exists in the Observations, then the only thing
 		/// to do is vote for this set.
 		#[pallet::weight(0)]
-		pub fn submit_validator_set(
+		pub fn submit_observation(
 			origin: OriginFor<T>,
-			payload: ValidatorSetPayload<
+			payload: ObservationPayload<
 				T::Public,
 				T::BlockNumber,
 				<T as frame_system::Config>::AccountId,
@@ -313,27 +420,6 @@ pub mod pallet {
 			let cur_val_set =
 				<CurrentValidatorSet<T>>::get().ok_or(Error::<T>::NoCurrentValidatorSet)?;
 			let who = payload.public.clone().into_account();
-			//
-			log::info!(
-				"️️️🐙 current_validator_set: {:#?},\nnext_validator_set: {:#?},\nwho: {:?}",
-				cur_val_set,
-				payload.val_set,
-				who
-			);
-			let candidates = <CandidateValidatorSets<T>>::get();
-			for i in 0..candidates.len() {
-				log::info!(
-					"🐙 Candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
-					i,
-					candidates.get(i),
-					<Voters<T>>::get(i as u32)
-				);
-			}
-			//
-			ensure!(
-				payload.val_set.sequence_number == cur_val_set.sequence_number + 1,
-				Error::<T>::WrongSequenceNumber
-			);
 
 			let val = cur_val_set.validators.iter().find(|v| {
 				let id = <pallet_session::Module<T>>::key_owner(
@@ -351,19 +437,91 @@ pub mod pallet {
 				return Err(Error::<T>::NotValidator.into());
 			}
 			let val = val.expect("Validator is valid; qed").clone();
-			Self::add_validator_set(who, val, payload.val_set);
+
 			//
-			log::info!("🐙 after submit_validator_set");
-			let candidates = <CandidateValidatorSets<T>>::get();
-			for i in 0..candidates.len() {
-				log::info!(
-					"🐙 candidate_index: {:#?},\ncandidate: {:#?},\nvoters: {:#?}",
-					i,
-					candidates.get(i),
-					<Voters<T>>::get(i as u32)
-				);
+			log::info!("️️️🐙 observation: {:#?},\nwho: {:?}", payload.observation, who);
+			//
+			<Observations<T>>::mutate(payload.observation.sequence_number(), |obs| {
+				let found = obs.iter().any(|o| o == &payload.observation);
+				if !found {
+					obs.push(payload.observation.clone())
+				}
+			});
+			<Observing<T>>::mutate(&payload.observation, |vals| {
+				let found = vals.iter().any(|v| v.id == val.id);
+				if !found {
+					vals.push(val);
+				} else {
+					log::info!("🐙 {:?} submits a duplicate ocw tx", val.id);
+				}
+			});
+
+			let total_weight: u128 = cur_val_set.validators.iter().map(|v| v.weight).sum();
+			let weight: u128 =
+				<Observing<T>>::get(&payload.observation).iter().map(|v| v.weight).sum();
+			//
+			log::info!(
+				"️️️🐙 observations: {:#?}",
+				<Observations<T>>::get(payload.observation.sequence_number())
+			);
+			log::info!("️️️🐙 observer: {:#?}", <Observing<T>>::get(&payload.observation));
+			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
+			//
+
+			// TODO 2/3
+			if weight == total_weight {
+				let seq_num = payload.observation.sequence_number();
+				match payload.observation {
+					Observation::UpdateValidatorSet(val_set) => {
+						ensure!(val_set.set_id == cur_val_set.set_id + 1, Error::<T>::WrongSetId);
+
+						<NextValidatorSet<T>>::put(val_set);
+					}
+					Observation::LockToken(event) => {
+						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(event.token_id) {
+							log::info!(
+								"️️️🐙 mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
+								asset_id,
+								event.sender_id,
+								event.receiver,
+								event.amount,
+							);
+							if let Err(error) = Self::mint_inner(
+								asset_id,
+								event.sender_id,
+								event.receiver,
+								event.amount,
+							) {
+								log::info!("️️️🐙 failed to mint asset: {:?}", error);
+								return Err(error);
+							}
+						} else {
+							return Err(Error::<T>::WrongAssetId.into());
+						}
+					}
+				}
+
+				let obs = <Observations<T>>::get(seq_num);
+				for o in obs.iter() {
+					<Observing<T>>::remove(o);
+				}
+				<Observations<T>>::remove(seq_num);
+
+				FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
+					match seq.take() {
+						Some(cur_seq) => {
+							if let Some(v) = cur_seq.checked_add(1) {
+								*seq = Some(v);
+							} else {
+								return Err(Error::<T>::FactSequenceOverflow.into());
+							}
+						}
+						None => *seq = Some(0),
+					}
+
+					Ok(().into())
+				})?;
 			}
-			//
 
 			Ok(().into())
 		}
@@ -379,13 +537,10 @@ pub mod pallet {
 			receiver: <T::Lookup as StaticLookup>::Source,
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
-			// TODO
 			ensure_root(origin)?;
-			let receiver = T::Lookup::lookup(receiver)?;
-			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
-			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
 
-			Ok(().into())
+			let receiver = T::Lookup::lookup(receiver)?;
+			Self::mint_inner(asset_id, sender_id, receiver, amount)
 		}
 
 		#[pallet::weight(0)]
@@ -398,6 +553,15 @@ pub mod pallet {
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
+
+			let message = XTransferPayload {
+				token_id: "USDC.testnet".as_bytes().to_vec(), // TODO
+				sender: sender.encode(),
+				receiver_id: receiver_id.clone(),
+				amount: 41, // TODO
+			};
+
+			Self::submit(&sender, &message.try_to_vec().unwrap())?;
 			Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
 
 			Ok(().into())
@@ -405,20 +569,18 @@ pub mod pallet {
 	}
 
 	impl<T: Config> Pallet<T> {
-		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u64)>) {
+		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u128)>) {
 			if vals.len() != 0 {
 				assert!(
 					<CurrentValidatorSet<T>>::get().is_none(),
 					"CurrentValidatorSet is already initialized!"
 				);
 				<CurrentValidatorSet<T>>::put(ValidatorSet {
-					sequence_number: 0,
+					sequence_number: 0, // unused
+					set_id: 0,
 					validators: vals
 						.iter()
-						.map(|x| Validator {
-							id: x.0.clone(),
-							weight: x.1,
-						})
+						.map(|x| Validator { id: x.0.clone(), weight: x.1 })
 						.collect::<Vec<_>>(),
 				});
 			}
@@ -475,31 +637,40 @@ pub mod pallet {
 			}
 		}
 
-		fn fetch_and_update_validator_set(
+		fn observing_main_chain(
 			block_number: T::BlockNumber,
-			next_seq_num: u32,
+			appchain_id: Vec<u8>,
 		) -> Result<(), &'static str> {
-			log::info!("🐙 in fetch_and_update_validator_set");
+			log::info!("🐙 in observing_main_chain");
 
-			// Make an external HTTP request to fetch the current validator set.
+			let mut next_fact_sequence = 0;
+			if let Some(cur_seq) = FactSequence::<T>::get() {
+				next_fact_sequence = cur_seq + 1;
+			}
+			log::info!("🐙 next_fact_sequence: {}", next_fact_sequence);
+
+			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
-			let next_val_set = Self::fetch_validator_set(
-				T::RELAY_CONTRACT.to_vec(),
-				Self::appchain_id(),
-				next_seq_num,
-			)
-			.map_err(|_| "Failed to fetch validator set")?;
-			log::info!("🐙 new validator set: {:#?}", next_val_set);
+			// TODO: limit
+			let obs =
+				Self::fetch_facts(T::RELAY_CONTRACT.to_vec(), appchain_id, next_fact_sequence, 1)
+					.map_err(|_| "Failed to fetch facts")?;
+
+			if obs.len() == 0 {
+				return Ok(());
+			}
 
 			// -- Sign using any account
 			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
 				.send_unsigned_transaction(
-					|account| ValidatorSetPayload {
+					|account| ObservationPayload {
 						public: account.public.clone(),
 						block_number,
-						val_set: next_val_set.clone(),
+						fact_sequence: next_fact_sequence,
+						// TODO
+						observation: obs[0].clone(),
 					},
-					|payload, signature| Call::submit_validator_set(payload, signature),
+					|payload, signature| Call::submit_observation(payload, signature),
 				)
 				.ok_or("🐙 No local accounts accounts available.")?;
 			result.map_err(|()| "🐙 Unable to submit transaction")?;
@@ -507,315 +678,21 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Fetch the validator set of a specified appchain with seq_num from relay contract.
-		fn fetch_validator_set(
-			relay_contract: Vec<u8>,
-			appchain_id: Vec<u8>,
-			seq_num: u32,
-		) -> Result<ValidatorSet<<T as frame_system::Config>::AccountId>, http::Error> {
-			// We want to keep the offchain worker execution time reasonable, so we set a hard-coded
-			// deadline to 2s to complete the external call.
-			// You can also wait idefinitely for the response, however you may still get a timeout
-			// coming from the host machine.
-			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(2_000));
-			// Initiate an external HTTP GET request.
-			// This is using high-level wrappers from `sp_runtime`, for the low-level calls that
-			// you can find in `sp_io`. The API is trying to be similar to `reqwest`, but
-			// since we are running in a custom WASM execution environment we can't simply
-			// import the library here.
-			let args = Self::encode_args(appchain_id, seq_num).ok_or_else(|| {
-				log::info!("🐙 Encode args error");
-				http::Error::Unknown
-			})?;
+		fn mint_inner(
+			asset_id: AssetIdOf<T>,
+			sender_id: Vec<u8>,
+			receiver: T::AccountId,
+			amount: AssetBalanceOf<T>,
+		) -> DispatchResultWithPostInfo {
+			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
+			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
 
-			let mut body = br#"
-			{
-				"jsonrpc": "2.0",
-				"id": "dontcare",
-				"method": "query",
-				"params": {
-					"request_type": "call_function",
-					"finality": "final",
-					"account_id": ""#
-				.to_vec();
-			body.extend(&relay_contract);
-			body.extend(
-				br#"",
-					"method_name": "get_validator_set",
-					"args_base64": ""#,
-			);
-			body.extend(&args);
-			body.extend(
-				br#""
-				}
-			}"#,
-			);
-			let request = http::Request::default()
-				.method(http::Method::Post)
-				.url("https://rpc.testnet.near.org")
-				.body(vec![body])
-				.add_header("Content-Type", "application/json");
-			// We set the deadline for sending of the request, note that awaiting response can
-			// have a separate deadline. Next we send the request, before that it's also possible
-			// to alter request headers or stream body content in case of non-GET requests.
-			let pending = request
-				.deadline(deadline)
-				.send()
-				.map_err(|_| http::Error::IoError)?;
-
-			// The request is already being processed by the host, we are free to do anything
-			// else in the worker (we can send multiple concurrent requests too).
-			// At some point however we probably want to check the response though,
-			// so we can block current thread and wait for it to finish.
-			// Note that since the request is being driven by the host, we don't have to wait
-			// for the request to have it complete, we will just not read the response.
-			let response = pending
-				.try_wait(deadline)
-				.map_err(|_| http::Error::DeadlineReached)??;
-			// Let's check the status code before we proceed to reading the response.
-			if response.code != 200 {
-				log::info!("🐙 Unexpected status code: {}", response.code);
-				return Err(http::Error::Unknown);
-			}
-
-			// Next we want to fully read the response body and collect it to a vector of bytes.
-			// Note that the return object allows you to read the body in chunks as well
-			// with a way to control the deadline.
-			let body = response.body().collect::<Vec<u8>>();
-
-			// Create a str slice from the body.
-			let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
-				log::info!("🐙 No UTF8 body");
-				http::Error::Unknown
-			})?;
-			log::info!("🐙 Got response: {:?}", body_str);
-
-			let val_set = match Self::parse_validator_set(body_str) {
-				Some(val_set) => Ok(val_set),
-				None => {
-					log::info!(
-						"🐙 Unable to extract validator set from the response: {:?}",
-						body_str
-					);
-					Err(http::Error::Unknown)
-				}
-			}?;
-
-			log::info!("🐙 Got validator set: {:?}", val_set);
-
-			Ok(val_set)
-		}
-
-		fn encode_args(appchain_id: Vec<u8>, seq_num: u32) -> Option<Vec<u8>> {
-			let a = String::from("{\"appchain_id\":");
-			let appchain_id = sp_std::str::from_utf8(&appchain_id).expect("octopus team will ensure that the appchain_id of a live appchain is a valid UTF8 string; qed");
-			let b = String::from(",\"seq_num\":");
-			let seq_num = seq_num.to_string();
-			let c = String::from("}");
-			let json = a + &appchain_id + &b + &seq_num + &c;
-			let res = base64::encode(json).into_bytes();
-			Some(res)
-		}
-
-		fn parse_validator_set(
-			body_str: &str,
-		) -> Option<ValidatorSet<<T as frame_system::Config>::AccountId>> {
-			// TODO
-			let result = Self::extract_result(body_str)
-				.ok_or_else(|| {
-					log::info!("🐙 Can't extract result from body");
-					Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-				})
-				.ok()?;
-
-			let result_str = sp_std::str::from_utf8(&result)
-				.map_err(|_| {
-					log::info!("🐙 No UTF8 result");
-					Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-				})
-				.ok()?;
-
-			log::info!("🐙 Got result: {:?}", result_str);
-			let mut val_set: ValidatorSet<<T as frame_system::Config>::AccountId> = ValidatorSet {
-				sequence_number: 0,
-				validators: vec![],
-			};
-			let val = lite_json::parse_json(result_str);
-			val.ok().and_then(|v| match v {
-				JsonValue::Object(obj) => {
-					val_set.sequence_number = obj
-						.clone()
-						.into_iter()
-						.find(|(k, _)| {
-							let mut sequence_number = "seq_num".chars();
-							k.iter().all(|k| Some(*k) == sequence_number.next())
-						})
-						.and_then(|v| match v.1 {
-							JsonValue::Number(number) => Some(number),
-							_ => None,
-						})?
-						.integer as u32;
-					obj.into_iter()
-						.find(|(k, _)| {
-							let mut validators = "validators".chars();
-							k.iter().all(|k| Some(*k) == validators.next())
-						})
-						.and_then(|(_, v)| match v {
-							JsonValue::Array(vs) => {
-								vs.iter().for_each(|v| match v {
-									JsonValue::Object(obj) => {
-										let id = obj
-											.clone()
-											.into_iter()
-											.find(|(k, _)| {
-												let mut id = "id".chars();
-												k.iter().all(|k| Some(*k) == id.next())
-											})
-											.and_then(|v| match v.1 {
-												JsonValue::String(s) => {
-													let data: Vec<u8> = s
-														.iter()
-														.skip(2)
-														.map(|c| *c as u8)
-														.collect::<Vec<_>>();
-													let b = hex::decode(data).map_err(|_| {
-														log::info!("🐙 Not a valid hex string");
-														Option::<ValidatorSet<<T as frame_system::Config>::AccountId>>::None
-													}).ok()?;
-													<T as frame_system::Config>::AccountId::decode(
-														&mut &b[..],
-													)
-													.ok()
-												}
-												_ => None,
-											});
-										let weight = obj
-											.clone()
-											.into_iter()
-											.find(|(k, _)| {
-												let mut weight = "weight".chars();
-												k.iter().all(|k| Some(*k) == weight.next())
-											})
-											.and_then(|v| match v.1 {
-												JsonValue::Number(number) => Some(number),
-												_ => None,
-											});
-										if id.is_some() && weight.is_some() {
-											let id = id.expect("id is valid; qed");
-											let weight =
-												weight.expect("weight is valid; qed").integer
-													as u64;
-											val_set.validators.push(Validator {
-												id: id,
-												weight: weight,
-											});
-										}
-									}
-									_ => (),
-								});
-								Some(0)
-							}
-							_ => None,
-						});
-					Some(val_set)
-				}
-				_ => None,
-			})
-		}
-
-		fn extract_result(body_str: &str) -> Option<Vec<u8>> {
-			let val = lite_json::parse_json(body_str);
-			val.ok().and_then(|v| match v {
-				JsonValue::Object(obj) => {
-					let version = obj
-						.clone()
-						.into_iter()
-						.find(|(k, _)| {
-							let mut jsonrpc = "jsonrpc".chars();
-							k.iter().all(|k| Some(*k) == jsonrpc.next())
-						})
-						.and_then(|v| match v.1 {
-							JsonValue::String(s) => Some(s),
-							_ => None,
-						})?;
-					log::info!("🐙 version: {:?}", version);
-					let id = obj
-						.clone()
-						.into_iter()
-						.find(|(k, _)| {
-							let mut id = "id".chars();
-							k.iter().all(|k| Some(*k) == id.next())
-						})
-						.and_then(|v| match v.1 {
-							JsonValue::String(s) => Some(s),
-							_ => None,
-						})?;
-					log::info!("🐙 id: {:?}", id);
-					obj.into_iter()
-						.find(|(k, _)| {
-							let mut result = "result".chars();
-							k.iter().all(|k| Some(*k) == result.next())
-						})
-						.and_then(|(_, v)| match v {
-							JsonValue::Object(obj) => {
-								obj.into_iter()
-									.find(|(k, _)| {
-										let mut values = "result".chars();
-										k.iter().all(|k| Some(*k) == values.next())
-									})
-									.and_then(|(_, v)| match v {
-										JsonValue::Array(vs) => {
-											// TODO
-											let res: Vec<u8> = vs
-												.iter()
-												.map(|jv| match jv {
-													JsonValue::Number(n) => n.integer as u8,
-													_ => 0,
-												})
-												.collect();
-											Some(res)
-										}
-										_ => None,
-									})
-							}
-							_ => None,
-						})
-				}
-				_ => None,
-			})
-		}
-
-		/// Add new validator set to the CandidateValidatorSets.
-		fn add_validator_set(
-			who: T::AccountId,
-			val: Validator<<T as frame_system::Config>::AccountId>,
-			new_val_set: ValidatorSet<<T as frame_system::Config>::AccountId>,
-		) {
-			log::info!("🐙 Adding to the voters: {:#?}", new_val_set);
-			let index = 0;
-			<CandidateValidatorSets<T>>::mutate(|val_sets| {
-				// TODO
-				if val_sets.len() == 0 {
-					val_sets.push(new_val_set.clone());
-				}
-			});
-
-			<Voters<T>>::mutate(index, |vals| {
-				let exist = vals.iter().find(|v| v.id == val.id);
-				match exist {
-					Some(id) => {
-						log::info!("🐙 duplicated ocw tx: {:?}", id);
-					}
-					None => vals.push(val),
-				}
-			});
-
-			Self::deposit_event(Event::NewVoterFor(new_val_set, who));
+			Ok(().into())
 		}
 
 		fn validate_transaction_parameters(
 			block_number: &T::BlockNumber,
-			val_set: &ValidatorSet<<T as frame_system::Config>::AccountId>,
+			fact_sequence: u64,
 			account_id: <T as frame_system::Config>::AccountId,
 		) -> TransactionValidity {
 			// Let's make sure to reject transactions from the future.
@@ -832,12 +709,12 @@ pub mod pallet {
 			ValidTransaction::with_tag_prefix("OctopusAppchain")
 				// We set base priority to 2**20 and hope it's included before any other
 				// transactions in the pool. Next we tweak the priority depending on the
-				// sequence number of the validator set.
-				.priority(T::UnsignedPriority::get().saturating_add(val_set.sequence_number as _))
+				// sequence of the fact that happened on main chain.
+				.priority(T::UnsignedPriority::get().saturating_add(fact_sequence))
 				// This transaction does not require anything else to go before into the pool.
 				//.and_requires()
 				// One can only vote on the validator set with the same seq_num once.
-				.and_provides((val_set.sequence_number, account_id))
+				.and_provides((fact_sequence, account_id))
 				// The transaction is only valid for next 5 blocks. After that it's
 				// going to be revalidated by the pool.
 				.longevity(5)
@@ -848,6 +725,48 @@ pub mod pallet {
 				// claim a reward.
 				.propagate(true)
 				.build()
+		}
+
+		fn submit(_who: &T::AccountId, payload: &[u8]) -> DispatchResultWithPostInfo {
+			Nonce::<T>::try_mutate(|nonce| -> DispatchResultWithPostInfo {
+				if let Some(v) = nonce.checked_add(1) {
+					*nonce = v;
+				} else {
+					return Err(Error::<T>::NonceOverflow.into());
+				}
+
+				MessageQueue::<T>::append(Message { nonce: *nonce, payload: payload.to_vec() });
+				Ok(().into())
+			})
+		}
+
+		fn commit() -> Weight {
+			let messages: Vec<Message> = MessageQueue::<T>::take();
+			if messages.is_empty() {
+				return 0;
+			}
+
+			let commitment_hash = Self::make_commitment_hash(&messages);
+
+			<frame_system::Pallet<T>>::deposit_log(DigestItem::Other(
+				commitment_hash.as_bytes().to_vec(),
+			));
+
+			let key = Self::make_offchain_key(commitment_hash);
+			offchain_index::set(&*key, &messages.encode());
+
+			0
+		}
+
+		fn make_commitment_hash(messages: &[Message]) -> H256 {
+			let messages: Vec<_> =
+				messages.iter().map(|message| (message.nonce, message.payload.clone())).collect();
+			let input = messages.encode();
+			Keccak256::hash(&input)
+		}
+
+		fn make_offchain_key(hash: H256) -> Vec<u8> {
+			(b"commitment", hash).encode()
 		}
 	}
 
@@ -860,52 +779,19 @@ pub mod pallet {
 				<frame_system::Pallet<T>>::block_number(),
 				new_index
 			);
-			if let Some(cur_val_set) = <CurrentValidatorSet<T>>::get() {
-				//
-				log::info!("🐙 current_validator_set: {:#?}", cur_val_set);
-				let candidates = <CandidateValidatorSets<T>>::get();
-				for i in 0..candidates.len() {
-					log::info!(
-						"🐙 candidate_index: {:?},\ncandidate: {:#?},\nvoters: {:#?}",
-						i,
-						candidates.get(i),
-						<Voters<T>>::get(i as u32)
-					);
+
+			let next_val_set = <NextValidatorSet<T>>::get();
+			match next_val_set {
+				Some(new_val_set) => {
+					<CurrentValidatorSet<T>>::put(new_val_set.clone());
+					<NextValidatorSet<T>>::kill();
+					log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
+					Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
 				}
-				//
-				let total_weight: u64 = cur_val_set.validators.iter().map(|v| v.weight).sum();
-				// TODO
-				let next_val_set = <Voters<T>>::iter()
-					.find(|(_k, v)| v.iter().map(|x| x.weight).sum::<u64>() == total_weight)
-					.map(|(index, _v)| {
-						log::info!("🐙 total_weight: {}, index: {}", total_weight, index);
-						<CandidateValidatorSets<T>>::get()[index as usize].clone()
-					});
-				match next_val_set {
-					Some(new_val_set) => {
-						// TODO: transaction
-						<CurrentValidatorSet<T>>::put(new_val_set.clone());
-						let candidates = <CandidateValidatorSets<T>>::get();
-						for i in 0..candidates.len() {
-							<Voters<T>>::remove(i as u32);
-						}
-						<CandidateValidatorSets<T>>::kill();
-						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
-						Some(
-							new_val_set
-								.validators
-								.into_iter()
-								.map(|vals| vals.id)
-								.collect(),
-						)
-					}
-					None => {
-						log::info!("🐙 validator set has't changed");
-						None
-					}
+				None => {
+					log::info!("🐙 validator set has't changed");
+					None
 				}
-			} else {
-				None
 			}
 		}
 
