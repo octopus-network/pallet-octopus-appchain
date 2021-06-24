@@ -59,6 +59,9 @@ mod crypto {
 /// Identity of an appchain authority.
 pub type AuthorityId = crypto::Public;
 
+type AssetId = u32;
+type AssetBalance = u128;
+
 type AssetBalanceOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::Balance;
 
@@ -189,7 +192,11 @@ pub mod pallet {
 		/// The overarching dispatch call type.
 		type Call: From<Call<Self>>;
 
-		type Assets: fungibles::Mutate<<Self as frame_system::Config>::AccountId>;
+		type Assets: fungibles::Mutate<
+			<Self as frame_system::Config>::AccountId,
+			AssetId = AssetId,
+			Balance = AssetBalance,
+		>;
 
 		// Configuration parameters
 
@@ -251,7 +258,8 @@ pub mod pallet {
 	>;
 
 	#[pallet::storage]
-	pub type AssetId<T: Config> = StorageMap<_, Twox64Concat, Vec<u8>, AssetIdOf<T>, OptionQuery>;
+	pub type AssetIdByName<T: Config> =
+		StorageMap<_, Twox64Concat, Vec<u8>, AssetIdOf<T>, ValueQuery>;
 
 	#[pallet::storage]
 	pub type MessageQueue<T: Config> = StorageValue<_, Vec<Message>, ValueQuery>;
@@ -263,13 +271,17 @@ pub mod pallet {
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
 		pub validators: Vec<(T::AccountId, u128)>,
-		pub asset_id: Vec<(String, AssetIdOf<T>)>,
+		pub asset_id_by_name: Vec<(String, AssetIdOf<T>)>,
 	}
 
 	#[cfg(feature = "std")]
 	impl<T: Config> Default for GenesisConfig<T> {
 		fn default() -> Self {
-			Self { appchain_id: String::new(), validators: Vec::new(), asset_id: Vec::new() }
+			Self {
+				appchain_id: String::new(),
+				validators: Vec::new(),
+				asset_id_by_name: Vec::new(),
+			}
 		}
 	}
 
@@ -279,8 +291,8 @@ pub mod pallet {
 			<AppchainId<T>>::put(self.appchain_id.as_bytes());
 			Pallet::<T>::initialize_validators(&self.validators);
 
-			for (token_id, id) in self.asset_id.iter() {
-				<AssetId<T>>::insert(token_id.as_bytes(), id);
+			for (token_id, id) in self.asset_id_by_name.iter() {
+				<AssetIdByName<T>>::insert(token_id.as_bytes(), id);
 			}
 		}
 	}
@@ -313,6 +325,8 @@ pub mod pallet {
 		NonceOverflow,
 		/// Fact sequence overflow.
 		FactSequenceOverflow,
+		/// Wrong Asset Id.
+		WrongAssetId,
 	}
 
 	#[pallet::hooks]
@@ -460,13 +474,21 @@ pub mod pallet {
 						<NextValidatorSet<T>>::put(val_set);
 					}
 					Observation::LockToken(event) => {
-						if let Some(asset_id) = <AssetId<T>>::get(event.token_id) {
-							Self::mint_inner(
+						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(event.token_id) {
+							log::info!(
+								"️️️🐙 mint asset:{:?}, recevier:{:?}, amount:{:?}",
 								asset_id,
-								vec![],
 								event.receiver_id,
-								(event.amount as u32).into(),
-							)?;
+								event.amount
+							);
+							if let Err(error) =
+								Self::mint_inner(asset_id, vec![], event.receiver_id, event.amount)
+							{
+								log::info!("️️️🐙 failed to mint asset: {:?}", error);
+								return Err(error);
+							}
+						} else {
+							return Err(Error::<T>::WrongAssetId.into());
 						}
 					}
 				}
