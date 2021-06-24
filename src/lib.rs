@@ -72,7 +72,7 @@ type AssetIdOf<T> =
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Validator<AccountId> {
 	/// The validator's id.
-	#[serde(deserialize_with = "deserialize_from_bytes")]
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	id: AccountId,
 	/// The weight of this validator in main chain's staking system.
@@ -80,13 +80,15 @@ pub struct Validator<AccountId> {
 	weight: u128,
 }
 
-fn deserialize_from_bytes<'de, S, D>(deserializer: D) -> Result<S, D::Error>
+fn deserialize_from_hex_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
 where
 	S: Decode,
 	D: Deserializer<'de>,
 {
-	let account_id_bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-	S::decode(&mut &account_id_bytes[..]).map_err(|e| de::Error::custom(e.to_string()))
+	let account_id_str: String = Deserialize::deserialize(deserializer)?;
+	let account_id_hex =
+		hex::decode(&account_id_str[2..]).map_err(|e| de::Error::custom(e.to_string()))?;
+	S::decode(&mut &account_id_hex[..]).map_err(|e| de::Error::custom(e.to_string()))
 }
 
 /// The validator set of appchain.
@@ -94,7 +96,7 @@ where
 pub struct ValidatorSet<AccountId> {
 	/// The sequence number of this fact on the main_chain.
 	#[serde(rename = "seq_num")]
-	sequence_number: u64,
+	sequence_number: u32,
 	set_id: u32,
 	/// Validators in this set.
 	#[serde(bound(deserialize = "AccountId: Decode"))]
@@ -105,12 +107,14 @@ pub struct ValidatorSet<AccountId> {
 pub struct LockEvent<AccountId> {
 	/// The sequence number of this fact on the main_chain.
 	#[serde(rename = "seq_num")]
-	sequence_number: u64,
+	sequence_number: u32,
 	#[serde(with = "serde_bytes")]
 	token_id: Vec<u8>,
-	#[serde(deserialize_with = "deserialize_from_bytes")]
+	#[serde(with = "serde_bytes")]
+	sender_id: Vec<u8>,
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
 	#[serde(bound(deserialize = "AccountId: Decode"))]
-	receiver_id: AccountId,
+	receiver: AccountId,
 	#[serde(deserialize_with = "deserialize_from_str")]
 	amount: u128,
 }
@@ -134,7 +138,7 @@ pub enum Observation<AccountId> {
 }
 
 impl<AccountId> Observation<AccountId> {
-	fn sequence_number(&self) -> u64 {
+	fn sequence_number(&self) -> u32 {
 		match self {
 			Observation::UpdateValidatorSet(val_set) => val_set.sequence_number,
 			Observation::LockToken(event) => event.sequence_number,
@@ -246,7 +250,7 @@ pub mod pallet {
 
 	#[pallet::storage]
 	pub type Observations<T: Config> =
-		StorageMap<_, Twox64Concat, u64, Vec<Observation<T::AccountId>>, ValueQuery>;
+		StorageMap<_, Twox64Concat, u32, Vec<Observation<T::AccountId>>, ValueQuery>;
 
 	#[pallet::storage]
 	pub type Observing<T: Config> = StorageMap<
@@ -476,14 +480,18 @@ pub mod pallet {
 					Observation::LockToken(event) => {
 						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(event.token_id) {
 							log::info!(
-								"️️️🐙 mint asset:{:?}, recevier:{:?}, amount:{:?}",
+								"️️️🐙 mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
 								asset_id,
-								event.receiver_id,
-								event.amount
+								event.sender_id,
+								event.receiver,
+								event.amount,
 							);
-							if let Err(error) =
-								Self::mint_inner(asset_id, vec![], event.receiver_id, event.amount)
-							{
+							if let Err(error) = Self::mint_inner(
+								asset_id,
+								event.sender_id,
+								event.receiver,
+								event.amount,
+							) {
 								log::info!("️️️🐙 failed to mint asset: {:?}", error);
 								return Err(error);
 							}
