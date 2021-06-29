@@ -471,7 +471,7 @@ pub mod pallet {
 			// TODO 2/3
 			if weight == total_weight {
 				let seq_num = payload.observation.sequence_number();
-				match payload.observation {
+				match payload.observation.clone() {
 					Observation::UpdateValidatorSet(val_set) => {
 						ensure!(val_set.set_id == cur_val_set.set_id + 1, Error::<T>::WrongSetId);
 
@@ -507,20 +507,22 @@ pub mod pallet {
 				}
 				<Observations<T>>::remove(seq_num);
 
-				FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
-					match seq.take() {
-						Some(cur_seq) => {
-							if let Some(v) = cur_seq.checked_add(1) {
-								*seq = Some(v);
-							} else {
-								return Err(Error::<T>::FactSequenceOverflow.into());
+				if matches!(payload.observation, Observation::LockToken(_)) {
+					FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
+						match seq.take() {
+							Some(cur_seq) => {
+								if let Some(v) = cur_seq.checked_add(1) {
+									*seq = Some(v);
+								} else {
+									return Err(Error::<T>::FactSequenceOverflow.into());
+								}
 							}
+							None => *seq = Some(0),
 						}
-						None => *seq = Some(0),
-					}
 
-					Ok(().into())
-				})?;
+						Ok(().into())
+					})?;
+				}
 			}
 
 			Ok(().into())
@@ -783,10 +785,30 @@ pub mod pallet {
 			let next_val_set = <NextValidatorSet<T>>::get();
 			match next_val_set {
 				Some(new_val_set) => {
-					<CurrentValidatorSet<T>>::put(new_val_set.clone());
-					<NextValidatorSet<T>>::kill();
-					log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
-					Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
+					let res = FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
+						match seq.take() {
+							Some(cur_seq) => {
+								if let Some(v) = cur_seq.checked_add(1) {
+									*seq = Some(v);
+								} else {
+									log::info!("🐙 fact sequence overflow: {:?}", cur_seq);
+									return Err(Error::<T>::FactSequenceOverflow.into());
+								}
+							}
+							None => *seq = Some(0),
+						}
+
+						Ok(().into())
+					});
+
+					if let Ok(_) = res {
+						<CurrentValidatorSet<T>>::put(new_val_set.clone());
+						<NextValidatorSet<T>>::kill();
+						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
+						Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
+					} else {
+						None
+					}
 				}
 				None => {
 					log::info!("🐙 validator set has't changed");
