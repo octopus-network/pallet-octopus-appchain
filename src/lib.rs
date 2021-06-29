@@ -27,7 +27,7 @@ use sp_std::prelude::*;
 
 pub use pallet::*;
 
-mod main_chain;
+mod mainchain;
 
 #[cfg(test)]
 mod mock;
@@ -94,7 +94,7 @@ where
 /// The validator set of appchain.
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct ValidatorSet<AccountId> {
-	/// The sequence number of this fact on the main_chain.
+	/// The sequence number of this fact on the mainchain.
 	#[serde(rename = "seq_num")]
 	sequence_number: u32,
 	set_id: u32,
@@ -105,7 +105,7 @@ pub struct ValidatorSet<AccountId> {
 
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct LockEvent<AccountId> {
-	/// The sequence number of this fact on the main_chain.
+	/// The sequence number of this fact on the mainchain.
 	#[serde(rename = "seq_num")]
 	sequence_number: u32,
 	#[serde(with = "serde_bytes")]
@@ -362,8 +362,8 @@ pub mod pallet {
 				return;
 			}
 
-			if let Err(e) = Self::observing_main_chain(block_number, appchain_id.clone()) {
-				log::info!("🐙 observing_main_chain: Error: {}", e);
+			if let Err(e) = Self::observing_mainchain(block_number, appchain_id.clone()) {
+				log::info!("🐙 observing_mainchain: Error: {}", e);
 			}
 		}
 	}
@@ -637,11 +637,11 @@ pub mod pallet {
 			}
 		}
 
-		fn observing_main_chain(
+		fn observing_mainchain(
 			block_number: T::BlockNumber,
 			appchain_id: Vec<u8>,
 		) -> Result<(), &'static str> {
-			log::info!("🐙 in observing_main_chain");
+			log::info!("🐙 in observing_mainchain");
 
 			let mut next_fact_sequence = 0;
 			if let Some(cur_seq) = FactSequence::<T>::get() {
