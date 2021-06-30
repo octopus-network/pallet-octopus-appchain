@@ -331,6 +331,8 @@ pub mod pallet {
 		FactSequenceOverflow,
 		/// Wrong Asset Id.
 		WrongAssetId,
+		/// Token Not Exist
+		TokenNotExist,
 	}
 
 	#[pallet::hooks]
@@ -549,26 +551,32 @@ pub mod pallet {
 		#[transactional]
 		pub fn burn(
 			origin: OriginFor<T>,
-			asset_id: AssetIdOf<T>,
+			token_id: Vec<u8>,
 			receiver_id: Vec<u8>,
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
-			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
+			
+			if let Ok(asset_id) = <AssetIdByName<T>>::try_get(token_id.clone()) {
+				<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
 
-			let prefix = String::from("0x");
-			let hex_sender = prefix + &hex::encode(sender.encode());
-			let message = XTransferPayload {
-				token_id: "test-stable.testnet".as_bytes().to_vec(), // TODO
-				sender: hex_sender.into_bytes(),
-				receiver_id: receiver_id.clone(),
-				amount,
-			};
+				let prefix = String::from("0x");
+				let hex_sender = prefix + &hex::encode(sender.encode());
+				let message = XTransferPayload {
+					token_id,
+					sender: hex_sender.into_bytes(),
+					receiver_id: receiver_id.clone(),
+					amount,
+				};
 
-			Self::submit(&sender, &message.try_to_vec().unwrap())?;
-			Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
+				Self::submit(&sender, &message.try_to_vec().unwrap())?;
+				Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
 
-			Ok(().into())
+				Ok(().into())
+			} else {
+				Err(Error::<T>::TokenNotExist.into())
+			}
+			
 		}
 	}
 
