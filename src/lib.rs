@@ -556,11 +556,13 @@ pub mod pallet {
 			let sender = ensure_signed(origin)?;
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
 
+			let prefix = String::from("0x");
+			let hex_sender = prefix + &hex::encode(sender.encode());
 			let message = XTransferPayload {
-				token_id: "USDC.testnet".as_bytes().to_vec(), // TODO
-				sender: sender.encode(),
+				token_id: "test-stable.testnet".as_bytes().to_vec(), // TODO
+				sender: hex_sender.into_bytes(),
 				receiver_id: receiver_id.clone(),
-				amount: 41, // TODO
+				amount,
 			};
 
 			Self::submit(&sender, &message.try_to_vec().unwrap())?;
