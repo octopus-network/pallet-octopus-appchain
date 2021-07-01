@@ -246,7 +246,7 @@ pub mod pallet {
 	pub type NextValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
 	#[pallet::storage]
-	pub type FactSequence<T: Config> = StorageValue<_, u64, OptionQuery>;
+	pub type NextFactSequence<T: Config> = StorageValue<_, u64, ValueQuery>;
 
 	#[pallet::storage]
 	pub type Observations<T: Config> =
@@ -327,8 +327,8 @@ pub mod pallet {
 		NotValidator,
 		/// Nonce overflow.
 		NonceOverflow,
-		/// Fact sequence overflow.
-		FactSequenceOverflow,
+		/// Next fact sequence overflow.
+		NextFactSequenceOverflow,
 		/// Wrong Asset Id.
 		WrongAssetId,
 	}
@@ -508,18 +508,12 @@ pub mod pallet {
 				<Observations<T>>::remove(seq_num);
 
 				if matches!(payload.observation, Observation::LockToken(_)) {
-					FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
-						match seq.take() {
-							Some(cur_seq) => {
-								if let Some(v) = cur_seq.checked_add(1) {
-									*seq = Some(v);
-								} else {
-									return Err(Error::<T>::FactSequenceOverflow.into());
-								}
-							}
-							None => *seq = Some(0),
+					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
+						if let Some(v) = next_seq.checked_add(1) {
+							*next_seq = v;
+						} else {
+							return Err(Error::<T>::NextFactSequenceOverflow.into());
 						}
-
 						Ok(().into())
 					})?;
 				}
@@ -647,10 +641,7 @@ pub mod pallet {
 		) -> Result<(), &'static str> {
 			log::info!("🐙 in observing_mainchain");
 
-			let mut next_fact_sequence = 0;
-			if let Some(cur_seq) = FactSequence::<T>::get() {
-				next_fact_sequence = cur_seq + 1;
-			}
+			let next_fact_sequence = NextFactSequence::<T>::get();
 			log::info!("🐙 next_fact_sequence: {}", next_fact_sequence);
 
 			// Make an external HTTP request to fetch facts from main chain.
@@ -787,21 +778,17 @@ pub mod pallet {
 			let next_val_set = <NextValidatorSet<T>>::get();
 			match next_val_set {
 				Some(new_val_set) => {
-					let res = FactSequence::<T>::try_mutate(|seq| -> DispatchResultWithPostInfo {
-						match seq.take() {
-							Some(cur_seq) => {
-								if let Some(v) = cur_seq.checked_add(1) {
-									*seq = Some(v);
-								} else {
-									log::info!("🐙 fact sequence overflow: {:?}", cur_seq);
-									return Err(Error::<T>::FactSequenceOverflow.into());
-								}
+					let res = NextFactSequence::<T>::try_mutate(
+						|next_seq| -> DispatchResultWithPostInfo {
+							if let Some(v) = next_seq.checked_add(1) {
+								*next_seq = v;
+							} else {
+								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
+								return Err(Error::<T>::NextFactSequenceOverflow.into());
 							}
-							None => *seq = Some(0),
-						}
-
-						Ok(().into())
-					});
+							Ok(().into())
+						},
+					);
 
 					if let Ok(_) = res {
 						<CurrentValidatorSet<T>>::put(new_val_set.clone());
