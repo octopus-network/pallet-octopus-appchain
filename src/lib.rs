@@ -641,7 +641,7 @@ pub mod pallet {
 		) -> Result<(), &'static str> {
 			log::info!("🐙 in observing_mainchain");
 
-			let next_fact_sequence = NextFactSequence::<T>::get() + 1;
+			let next_fact_sequence = NextFactSequence::<T>::get();
 			log::info!("🐙 next_fact_sequence: {}", next_fact_sequence);
 
 			// Make an external HTTP request to fetch facts from main chain.
