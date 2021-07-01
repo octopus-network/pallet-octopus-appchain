@@ -327,8 +327,8 @@ pub mod pallet {
 		NotValidator,
 		/// Nonce overflow.
 		NonceOverflow,
-		/// Fact sequence overflow.
-		FactSequenceOverflow,
+		/// Next fact sequence overflow.
+		NextFactSequenceOverflow,
 		/// Wrong Asset Id.
 		WrongAssetId,
 	}
@@ -512,7 +512,7 @@ pub mod pallet {
 						if let Some(v) = next_seq.checked_add(1) {
 							*next_seq = v;
 						} else {
-							return Err(Error::<T>::FactSequenceOverflow.into());
+							return Err(Error::<T>::NextFactSequenceOverflow.into());
 						}
 						Ok(().into())
 					})?;
@@ -778,15 +778,17 @@ pub mod pallet {
 			let next_val_set = <NextValidatorSet<T>>::get();
 			match next_val_set {
 				Some(new_val_set) => {
-					let res = NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
-						if let Some(v) = next_seq.checked_add(1) {
-							*next_seq = v;
-						} else {
-							log::info!("🐙 fact sequence overflow: {:?}", next_seq);
-							return Err(Error::<T>::FactSequenceOverflow.into());
-						}
-						Ok(().into())
-					});
+					let res = NextFactSequence::<T>::try_mutate(
+						|next_seq| -> DispatchResultWithPostInfo {
+							if let Some(v) = next_seq.checked_add(1) {
+								*next_seq = v;
+							} else {
+								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
+								return Err(Error::<T>::NextFactSequenceOverflow.into());
+							}
+							Ok(().into())
+						},
+					);
 
 					if let Ok(_) = res {
 						<CurrentValidatorSet<T>>::put(new_val_set.clone());
