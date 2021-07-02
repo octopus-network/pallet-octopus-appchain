@@ -548,12 +548,18 @@ pub mod pallet {
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
+
+			let token_id = <AssetIdByName<T>>::iter()
+				.find(|p| p.1 == asset_id)
+				.map(|p| p.0)
+				.ok_or(Error::<T>::WrongAssetId)?;
+
 			<T::Assets as fungibles::Mutate<T::AccountId>>::burn_from(asset_id, &sender, amount)?;
 
 			let prefix = String::from("0x");
 			let hex_sender = prefix + &hex::encode(sender.encode());
 			let message = XTransferPayload {
-				token_id: "test-stable.testnet".as_bytes().to_vec(), // TODO
+				token_id,
 				sender: hex_sender.into_bytes(),
 				receiver_id: receiver_id.clone(),
 				amount,
