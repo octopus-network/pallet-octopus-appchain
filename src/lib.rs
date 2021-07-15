@@ -151,7 +151,7 @@ pub struct ObservationPayload<Public, BlockNumber, AccountId> {
 	public: Public,
 	block_number: BlockNumber,
 	fact_sequence: u64,
-	observation: Observation<AccountId>,
+	observations: Vec<Observation<AccountId>>,
 }
 
 impl<T: SigningTypes> SignedPayload<T>
@@ -451,86 +451,13 @@ pub mod pallet {
 			let val = val.expect("Validator is valid; qed").clone();
 
 			//
-			log::info!("️️️🐙 observation: {:#?},\nwho: {:?}", payload.observation, who);
-			//
-			<Observations<T>>::mutate(payload.observation.sequence_number(), |obs| {
-				let found = obs.iter().any(|o| o == &payload.observation);
-				if !found {
-					obs.push(payload.observation.clone())
-				}
-			});
-			<Observing<T>>::mutate(&payload.observation, |vals| {
-				let found = vals.iter().any(|v| v.id == val.id);
-				if !found {
-					vals.push(val);
-				} else {
-					log::info!("🐙 {:?} submits a duplicate ocw tx", val.id);
-				}
-			});
-
-			let total_weight: u128 = cur_val_set.validators.iter().map(|v| v.weight).sum();
-			let weight: u128 =
-				<Observing<T>>::get(&payload.observation).iter().map(|v| v.weight).sum();
-			//
-			log::info!(
-				"️️️🐙 observations: {:#?}",
-				<Observations<T>>::get(payload.observation.sequence_number())
-			);
-			log::info!("️️️🐙 observer: {:#?}", <Observing<T>>::get(&payload.observation));
-			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
+			log::info!("️️️🐙 observations: {:#?},\nwho: {:?}", payload.observations, who);
 			//
 
-			// TODO 2/3
-			if weight == total_weight {
-				let seq_num = payload.observation.sequence_number();
-				match payload.observation.clone() {
-					Observation::UpdateValidatorSet(val_set) => {
-						ensure!(val_set.set_id == cur_val_set.set_id + 1, Error::<T>::WrongSetId);
-
-						<NextValidatorSet<T>>::put(val_set);
-					}
-					Observation::LockToken(event) => {
-						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(event.token_id) {
-							log::info!(
-								"️️️🐙 mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
-								asset_id,
-								event.sender_id,
-								event.receiver,
-								event.amount,
-							);
-							if let Err(error) = Self::mint_inner(
-								asset_id,
-								event.sender_id,
-								event.receiver,
-								event.amount,
-							) {
-								log::info!("️️️🐙 failed to mint asset: {:?}", error);
-								return Err(error);
-							}
-						} else {
-							return Err(Error::<T>::WrongAssetId.into());
-						}
-					}
-				}
-
-				let obs = <Observations<T>>::get(seq_num);
-				for o in obs.iter() {
-					<Observing<T>>::remove(o);
-				}
-				<Observations<T>>::remove(seq_num);
-
-				if matches!(payload.observation, Observation::LockToken(_)) {
-					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
-						if let Some(v) = next_seq.checked_add(1) {
-							*next_seq = v;
-						} else {
-							return Err(Error::<T>::NextFactSequenceOverflow.into());
-						}
-						Ok(().into())
-					})?;
-				}
+			for observation in payload.observations.iter() {
+				Self::submit_observation_inner(observation.clone(), &cur_val_set, &val)?;
 			}
-
+			
 			Ok(().into())
 		}
 
@@ -668,7 +595,7 @@ pub mod pallet {
 
 			let relay_contract = Self::relay_contract();
 			let obs =
-				Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, 1)
+				Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, 10)
 					.map_err(|_| "Failed to fetch facts")?;
 
 			if obs.len() == 0 {
@@ -682,8 +609,7 @@ pub mod pallet {
 						public: account.public.clone(),
 						block_number,
 						fact_sequence: next_fact_sequence,
-						// TODO
-						observation: obs[0].clone(),
+						observations: obs.clone(),
 					},
 					|payload, signature| Call::submit_observation(payload, signature),
 				)
@@ -701,6 +627,91 @@ pub mod pallet {
 		) -> DispatchResultWithPostInfo {
 			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
 			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
+
+			Ok(().into())
+		}
+
+		fn submit_observation_inner(
+			observation: Observation<T::AccountId>,
+			validator_set: &ValidatorSet<T::AccountId>,
+			validator: &Validator<T::AccountId>,
+		) -> DispatchResultWithPostInfo {
+			<Observations<T>>::mutate(observation.sequence_number(), |obs| {
+				let found = obs.iter().any(|o| o == &observation);
+				if !found {
+					obs.push(observation.clone())
+				}
+			});
+			<Observing<T>>::mutate(&observation, |vals| {
+				let found = vals.iter().any(|v| v.id == validator.id);
+				if !found {
+					vals.push(validator.clone());
+				} else {
+					log::info!("🐙 {:?} submits a duplicate ocw tx", validator.id);
+				}
+			});
+			let total_weight: u128 = validator_set.validators.iter().map(|v| v.weight).sum();
+			let weight: u128 =
+				<Observing<T>>::get(&observation).iter().map(|v| v.weight).sum();
+
+			//
+			log::info!(
+				"️️️🐙 observations: {:#?}",
+				<Observations<T>>::get(observation.sequence_number())
+			);
+			log::info!("️️️🐙 observer: {:#?}", <Observing<T>>::get(&observation));
+			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
+			//
+
+			if weight == total_weight {
+				let seq_num = observation.sequence_number();
+				match observation.clone() {
+					Observation::UpdateValidatorSet(val_set) => {
+						ensure!(val_set.set_id == validator_set.set_id + 1, Error::<T>::WrongSetId);
+
+						<NextValidatorSet<T>>::put(val_set);
+					}
+					Observation::LockToken(event) => {
+						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(event.token_id) {
+							log::info!(
+								"️️️🐙 mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
+								asset_id,
+								event.sender_id,
+								event.receiver,
+								event.amount,
+							);
+							if let Err(error) = Self::mint_inner(
+								asset_id,
+								event.sender_id,
+								event.receiver,
+								event.amount,
+							) {
+								log::info!("️️️🐙 failed to mint asset: {:?}", error);
+								return Err(error);
+							}
+						} else {
+							return Err(Error::<T>::WrongAssetId.into());
+						}
+					}
+				}
+
+				let obs = <Observations<T>>::get(seq_num);
+				for o in obs.iter() {
+					<Observing<T>>::remove(o);
+				}
+				<Observations<T>>::remove(seq_num);
+
+				if matches!(observation, Observation::LockToken(_)) {
+					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
+						if let Some(v) = next_seq.checked_add(1) {
+							*next_seq = v;
+						} else {
+							return Err(Error::<T>::NextFactSequenceOverflow.into());
+						}
+						Ok(().into())
+					})?;
+				}
+			}
 
 			Ok(().into())
 		}
