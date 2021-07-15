@@ -219,8 +219,6 @@ pub mod pallet {
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
 
-		/// The account_id/address of the relay contract on the main chain.
-		const RELAY_CONTRACT: &'static [u8];
 	}
 
 	#[pallet::pallet]
@@ -232,10 +230,20 @@ pub mod pallet {
 		Vec::new()
 	}
 
+	#[pallet::type_value]
+	pub(super) fn DefaultForRelayContract() -> Vec<u8> {
+		Vec::new()
+	}
+
 	#[pallet::storage]
 	#[pallet::getter(fn appchain_id)]
 	pub(super) type AppchainId<T: Config> =
 		StorageValue<_, Vec<u8>, ValueQuery, DefaultForAppchainId>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn relay_contract)]
+	pub(super) type RelayContract<T: Config> =
+		StorageValue<_, Vec<u8>, ValueQuery, DefaultForRelayContract>;
 
 	/// The current set of validators of this appchain.
 	#[pallet::storage]
@@ -274,6 +282,7 @@ pub mod pallet {
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
+		pub relay_contract: String,
 		pub validators: Vec<(T::AccountId, u128)>,
 		pub asset_id_by_name: Vec<(String, AssetIdOf<T>)>,
 	}
@@ -283,6 +292,7 @@ pub mod pallet {
 		fn default() -> Self {
 			Self {
 				appchain_id: String::new(),
+				relay_contract: String::new(),
 				validators: Vec::new(),
 				asset_id_by_name: Vec::new(),
 			}
@@ -293,6 +303,8 @@ pub mod pallet {
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
 		fn build(&self) {
 			<AppchainId<T>>::put(self.appchain_id.as_bytes());
+			<RelayContract<T>>::put(self.relay_contract.as_bytes());
+
 			Pallet::<T>::initialize_validators(&self.validators);
 
 			for (token_id, id) in self.asset_id_by_name.iter() {
@@ -653,8 +665,10 @@ pub mod pallet {
 			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
 			// TODO: limit
+
+			let relay_contract = Self::relay_contract();
 			let obs =
-				Self::fetch_facts(T::RELAY_CONTRACT.to_vec(), appchain_id, next_fact_sequence, 1)
+				Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, 1)
 					.map_err(|_| "Failed to fetch facts")?;
 
 			if obs.len() == 0 {
