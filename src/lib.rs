@@ -232,7 +232,7 @@ pub mod pallet {
 
 	#[pallet::type_value]
 	pub(super) fn DefaultForRelayContract() -> Vec<u8> {
-		Vec::new()
+		b"octopus-relay.testnet".to_vec()
 	}
 
 	#[pallet::storage]
