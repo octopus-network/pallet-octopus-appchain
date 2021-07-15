@@ -147,15 +147,15 @@ impl<AccountId> Observation<AccountId> {
 }
 
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct ObservationPayload<Public, BlockNumber, AccountId> {
+pub struct ObservationsPayload<Public, BlockNumber, AccountId> {
 	public: Public,
 	block_number: BlockNumber,
-	fact_sequence: u64,
+	next_fact_sequence: u64,
 	observations: Vec<Observation<AccountId>>,
 }
 
 impl<T: SigningTypes> SignedPayload<T>
-	for ObservationPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>
+	for ObservationsPayload<T::Public, T::BlockNumber, <T as frame_system::Config>::AccountId>
 {
 	fn public(&self) -> T::Public {
 		self.public.clone()
@@ -218,7 +218,6 @@ pub mod pallet {
 		/// multiple pallets send unsigned transactions.
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
-
 	}
 
 	#[pallet::pallet]
@@ -391,7 +390,7 @@ pub mod pallet {
 		/// are being whitelisted and marked as valid.
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			// Firstly let's check that we call the right function.
-			if let Call::submit_observation(ref payload, ref signature) = call {
+			if let Call::submit_observations(ref payload, ref signature) = call {
 				let signature_valid =
 					SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone());
 				if !signature_valid {
@@ -399,7 +398,7 @@ pub mod pallet {
 				}
 				Self::validate_transaction_parameters(
 					&payload.block_number,
-					payload.fact_sequence,
+					payload.next_fact_sequence,
 					payload.public.clone().into_account(),
 				)
 			} else {
@@ -413,14 +412,14 @@ pub mod pallet {
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// Submit a new observation.
+		/// Submit observations.
 		///
 		/// If the set already exists in the Observations, then the only thing
 		/// to do is vote for this set.
 		#[pallet::weight(0)]
-		pub fn submit_observation(
+		pub fn submit_observations(
 			origin: OriginFor<T>,
-			payload: ObservationPayload<
+			payload: ObservationsPayload<
 				T::Public,
 				T::BlockNumber,
 				<T as frame_system::Config>::AccountId,
@@ -455,9 +454,9 @@ pub mod pallet {
 			//
 
 			for observation in payload.observations.iter() {
-				Self::submit_observation_inner(observation.clone(), &cur_val_set, &val)?;
+				Self::submit_observation(observation.clone(), &cur_val_set, &val)?;
 			}
-			
+
 			Ok(().into())
 		}
 
@@ -591,12 +590,11 @@ pub mod pallet {
 
 			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
-			// TODO: limit
 
+			// TODO: move limit to trait
 			let relay_contract = Self::relay_contract();
-			let obs =
-				Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, 10)
-					.map_err(|_| "Failed to fetch facts")?;
+			let obs = Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, 10)
+				.map_err(|_| "Failed to fetch facts")?;
 
 			if obs.len() == 0 {
 				return Ok(());
@@ -605,13 +603,13 @@ pub mod pallet {
 			// -- Sign using any account
 			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
 				.send_unsigned_transaction(
-					|account| ObservationPayload {
+					|account| ObservationsPayload {
 						public: account.public.clone(),
 						block_number,
-						fact_sequence: next_fact_sequence,
+						next_fact_sequence,
 						observations: obs.clone(),
 					},
-					|payload, signature| Call::submit_observation(payload, signature),
+					|payload, signature| Call::submit_observations(payload, signature),
 				)
 				.ok_or("🐙 No local accounts accounts available.")?;
 			result.map_err(|()| "🐙 Unable to submit transaction")?;
@@ -631,7 +629,7 @@ pub mod pallet {
 			Ok(().into())
 		}
 
-		fn submit_observation_inner(
+		fn submit_observation(
 			observation: Observation<T::AccountId>,
 			validator_set: &ValidatorSet<T::AccountId>,
 			validator: &Validator<T::AccountId>,
@@ -651,8 +649,7 @@ pub mod pallet {
 				}
 			});
 			let total_weight: u128 = validator_set.validators.iter().map(|v| v.weight).sum();
-			let weight: u128 =
-				<Observing<T>>::get(&observation).iter().map(|v| v.weight).sum();
+			let weight: u128 = <Observing<T>>::get(&observation).iter().map(|v| v.weight).sum();
 
 			//
 			log::info!(
@@ -785,8 +782,10 @@ pub mod pallet {
 		}
 
 		fn make_commitment_hash(messages: &[Message]) -> H256 {
-			let messages: Vec<_> =
-				messages.iter().map(|message| (message.nonce, message.payload.clone())).collect();
+			let messages: Vec<_> = messages
+				.iter()
+				.map(|message| (message.nonce, message.payload.clone()))
+				.collect();
 			let input = messages.encode();
 			Keccak256::hash(&input)
 		}
