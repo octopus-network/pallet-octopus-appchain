@@ -150,7 +150,7 @@ impl<AccountId> Observation<AccountId> {
 pub struct ObservationsPayload<Public, BlockNumber, AccountId> {
 	public: Public,
 	block_number: BlockNumber,
-	next_fact_sequence: u64,
+	next_fact_sequence: u32,
 	observations: Vec<Observation<AccountId>>,
 }
 
@@ -253,7 +253,7 @@ pub mod pallet {
 	pub type NextValidatorSet<T: Config> = StorageValue<_, ValidatorSet<T::AccountId>, OptionQuery>;
 
 	#[pallet::storage]
-	pub type NextFactSequence<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub type NextFactSequence<T: Config> = StorageValue<_, u32, ValueQuery>;
 
 	#[pallet::storage]
 	pub type Observations<T: Config> =
@@ -373,7 +373,12 @@ pub mod pallet {
 				return;
 			}
 
-			if let Err(e) = Self::observing_mainchain(block_number, appchain_id.clone()) {
+			let relay_contract = Self::relay_contract();
+			// TODO: move limit to trait
+			let limit = 10;
+			if let Err(e) =
+				Self::observing_mainchain(block_number, relay_contract, appchain_id.clone(), limit)
+			{
 				log::info!("🐙 observing_mainchain: Error: {}", e);
 			}
 		}
@@ -579,9 +584,11 @@ pub mod pallet {
 			}
 		}
 
-		fn observing_mainchain(
+		pub(crate) fn observing_mainchain(
 			block_number: T::BlockNumber,
+			relay_contract: Vec<u8>,
 			appchain_id: Vec<u8>,
+			limit: u32,
 		) -> Result<(), &'static str> {
 			log::info!("🐙 in observing_mainchain");
 
@@ -591,9 +598,7 @@ pub mod pallet {
 			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
 
-			// TODO: move limit to trait
-			let relay_contract = Self::relay_contract();
-			let obs = Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, 10)
+			let obs = Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, limit)
 				.map_err(|_| "Failed to fetch facts")?;
 
 			if obs.len() == 0 {
@@ -715,7 +720,7 @@ pub mod pallet {
 
 		fn validate_transaction_parameters(
 			block_number: &T::BlockNumber,
-			fact_sequence: u64,
+			next_fact_sequence: u32,
 			account_id: <T as frame_system::Config>::AccountId,
 		) -> TransactionValidity {
 			// Let's make sure to reject transactions from the future.
@@ -733,11 +738,11 @@ pub mod pallet {
 				// We set base priority to 2**20 and hope it's included before any other
 				// transactions in the pool. Next we tweak the priority depending on the
 				// sequence of the fact that happened on main chain.
-				.priority(T::UnsignedPriority::get().saturating_add(fact_sequence))
+				.priority(T::UnsignedPriority::get().saturating_add(next_fact_sequence as u64))
 				// This transaction does not require anything else to go before into the pool.
 				//.and_requires()
 				// One can only vote on the validator set with the same seq_num once.
-				.and_provides((fact_sequence, account_id))
+				.and_provides((next_fact_sequence, account_id))
 				// The transaction is only valid for next 5 blocks. After that it's
 				// going to be revalidated by the pool.
 				.longevity(5)

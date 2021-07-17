@@ -33,7 +33,7 @@ frame_support::construct_runtime!(
 	}
 );
 
-type Extrinsic = TestXt<Call, ()>;
+pub(crate) type Extrinsic = TestXt<Call, ()>;
 type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
 
 impl frame_system::offchain::SigningTypes for Test {

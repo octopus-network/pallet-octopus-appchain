@@ -20,8 +20,8 @@ impl<T: Config> Pallet<T> {
 	pub(super) fn fetch_facts(
 		relay_contract: Vec<u8>,
 		appchain_id: Vec<u8>,
-		start: u64,
-		limit: u64,
+		start: u32,
+		limit: u32,
 	) -> Result<Vec<Observation<<T as frame_system::Config>::AccountId>>, http::Error> {
 		// We want to keep the offchain worker execution time reasonable, so we set a hard-coded
 		// deadline to 2s to complete the external call.
@@ -101,7 +101,7 @@ impl<T: Config> Pallet<T> {
 		Ok(obs)
 	}
 
-	fn encode_args(appchain_id: Vec<u8>, start: u64, limit: u64) -> Option<Vec<u8>> {
+	pub(crate) fn encode_args(appchain_id: Vec<u8>, start: u32, limit: u32) -> Option<Vec<u8>> {
 		let a = String::from("{\"appchain_id\":\"");
 		let appchain_id = sp_std::str::from_utf8(&appchain_id).expect("octopus team will ensure that the appchain_id of a live appchain is a valid UTF8 string; qed");
 		let b = String::from("\",\"start\":");
