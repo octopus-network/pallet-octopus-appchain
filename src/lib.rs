@@ -779,11 +779,10 @@ pub mod pallet {
 					<Observing<T>>::remove(o);
 				}
 				<Observations<T>>::remove(seq_num);
-
-				let next_fact_sequence = NextFactSequence::<T>::get();
-				if matches!(observation, Observation::LockToken(_)) && seq_num == next_fact_sequence {
+			
+				if matches!(observation, Observation::LockToken(_)) {
 					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
-						if let Some(v) = next_seq.checked_add(1) {
+						if let Some(v) = seq_num.checked_add(1) {
 							*next_seq = v;
 						} else {
 							return Err(Error::<T>::NextFactSequenceOverflow.into());
@@ -893,7 +892,7 @@ pub mod pallet {
 				Some(new_val_set) => {
 					let res = NextFactSequence::<T>::try_mutate(
 						|next_seq| -> DispatchResultWithPostInfo {
-							if let Some(v) = next_seq.checked_add(1) {
+							if let Some(v) = new_val_set.sequence_number.checked_add(1) {
 								*next_seq = v;
 							} else {
 								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
