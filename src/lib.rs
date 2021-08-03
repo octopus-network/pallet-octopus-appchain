@@ -178,6 +178,13 @@ pub struct XTransferPayload {
 	pub amount: u128,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct XTransferPayloadWithoutTokenId {
+	pub sender: Vec<u8>,
+	pub receiver_id: Vec<u8>,
+	pub amount: u128,
+}
+
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Message {
 	nonce: u64,
@@ -279,6 +286,9 @@ pub mod pallet {
 
 	#[pallet::storage]
 	pub type NextFactSequence<T: Config> = StorageValue<_, u32, ValueQuery>;
+
+	#[pallet::storage]
+	pub type ResyncFactSequence<T: Config> = StorageValue<_, u32, ValueQuery>;
 
 	#[pallet::storage]
 	pub type Observations<T: Config> =
@@ -557,6 +567,16 @@ pub mod pallet {
 
 			T::Currency::transfer(&who, &Self::account_id(), amount, AllowDeath)?;
 
+			let amount_unwrappped: u128 = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
+			let prefix = String::from("0x");
+			let hex_sender = prefix + &hex::encode(who.encode());
+			let message = XTransferPayloadWithoutTokenId {
+				sender: hex_sender.into_bytes(),
+				receiver_id: receiver_id.clone(),
+				amount: amount_unwrappped,
+			};
+
+			Self::submit(&who, &message.try_to_vec().unwrap())?;
 			Self::deposit_event(Event::Locked(who, receiver_id, amount));
 
 			Ok(().into())
@@ -726,8 +746,9 @@ pub mod pallet {
 			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
 			//
 
+			let seq_num = observation.sequence_number();
+
 			if weight == total_weight {
-				let seq_num = observation.sequence_number();
 				match observation.clone() {
 					Observation::UpdateValidatorSet(val_set) => {
 						ensure!(val_set.set_id == validator_set.set_id + 1, Error::<T>::WrongSetId);
@@ -782,14 +803,20 @@ pub mod pallet {
 			
 				if matches!(observation, Observation::LockToken(_)) {
 					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
-						if let Some(v) = seq_num.checked_add(1) {
+						let resync_seq = ResyncFactSequence::<T>::get();
+						if resync_seq > 0 {
+							*next_seq = resync_seq;
+						} else if let Some(v) = seq_num.checked_add(1) {
 							*next_seq = v;
+							ResyncFactSequence::<T>::put(0);
 						} else {
 							return Err(Error::<T>::NextFactSequenceOverflow.into());
 						}
 						Ok(().into())
 					})?;
 				}
+			} else {
+				ResyncFactSequence::<T>::put(seq_num);
 			}
 
 			Ok(().into())
@@ -892,8 +919,12 @@ pub mod pallet {
 				Some(new_val_set) => {
 					let res = NextFactSequence::<T>::try_mutate(
 						|next_seq| -> DispatchResultWithPostInfo {
-							if let Some(v) = new_val_set.sequence_number.checked_add(1) {
+							let resync_seq = ResyncFactSequence::<T>::get();
+							if resync_seq > 0 {
+								*next_seq = resync_seq;
+							} else if let Some(v) = new_val_set.sequence_number.checked_add(1) {
 								*next_seq = v;
+								ResyncFactSequence::<T>::put(0);
 							} else {
 								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
 								return Err(Error::<T>::NextFactSequenceOverflow.into());
