@@ -127,6 +127,21 @@ pub struct LockEvent<AccountId> {
 	amount: u128,
 }
 
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct BurnNativeEvent<AccountId> {
+	/// The sequence number of this fact on the mainchain.
+	#[serde(rename = "seq_num")]
+	sequence_number: u32,
+	#[serde(with = "serde_bytes")]
+	sender_id: Vec<u8>,
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	receiver: AccountId,
+	#[serde(deserialize_with = "deserialize_from_str")]
+	amount: u128,
+}
+
+
 pub fn deserialize_from_str<'de, S, D>(deserializer: D) -> Result<S, D::Error>
 where
 	S: sp_std::str::FromStr,
@@ -143,6 +158,8 @@ pub enum Observation<AccountId> {
 	UpdateValidatorSet(ValidatorSet<AccountId>),
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	LockToken(LockEvent<AccountId>),
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	BurnNativeToken(BurnNativeEvent<AccountId>),
 }
 
 impl<AccountId> Observation<AccountId> {
@@ -150,6 +167,7 @@ impl<AccountId> Observation<AccountId> {
 		match self {
 			Observation::UpdateValidatorSet(val_set) => val_set.sequence_number,
 			Observation::LockToken(event) => event.sequence_number,
+			Observation::BurnNativeToken(event) => event.sequence_number,
 		}
 	}
 }
@@ -252,11 +270,6 @@ pub mod pallet {
 	}
 
 	#[pallet::type_value]
-	pub(super) fn DefaultForAppchainTokenId() -> Vec<u8> {
-		Vec::new()
-	}
-
-	#[pallet::type_value]
 	pub(super) fn DefaultForRelayContract() -> Vec<u8> {
 		b"octopus-relay.testnet".to_vec()
 	}
@@ -265,11 +278,6 @@ pub mod pallet {
 	#[pallet::getter(fn appchain_id)]
 	pub(super) type AppchainId<T: Config> =
 		StorageValue<_, Vec<u8>, ValueQuery, DefaultForAppchainId>;
-
-	#[pallet::storage]
-	#[pallet::getter(fn appchain_token_id)]
-	pub(super) type AppchainTokenId<T: Config> =
-		StorageValue<_, Vec<u8>, ValueQuery, DefaultForAppchainTokenId>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn relay_contract)]
@@ -286,9 +294,6 @@ pub mod pallet {
 
 	#[pallet::storage]
 	pub type NextFactSequence<T: Config> = StorageValue<_, u32, ValueQuery>;
-
-	#[pallet::storage]
-	pub type ResyncFactSequence<T: Config> = StorageValue<_, u32, ValueQuery>;
 
 	#[pallet::storage]
 	pub type Observations<T: Config> =
@@ -316,7 +321,6 @@ pub mod pallet {
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub appchain_id: String,
-		pub appchain_token_id: String,
 		pub relay_contract: String,
 		pub validators: Vec<(T::AccountId, u128)>,
 		pub asset_id_by_name: Vec<(String, AssetIdOf<T>)>,
@@ -327,7 +331,6 @@ pub mod pallet {
 		fn default() -> Self {
 			Self {
 				appchain_id: String::new(),
-				appchain_token_id: String::new(),
 				relay_contract: String::new(),
 				validators: Vec::new(),
 				asset_id_by_name: Vec::new(),
@@ -339,7 +342,6 @@ pub mod pallet {
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
 		fn build(&self) {
 			<AppchainId<T>>::put(self.appchain_id.as_bytes());
-			<AppchainTokenId<T>>::put(self.appchain_token_id.as_bytes());
 			<RelayContract<T>>::put(self.relay_contract.as_bytes());
 
 			Pallet::<T>::initialize_validators(&self.validators);
@@ -364,7 +366,7 @@ pub mod pallet {
 		Minted(AssetIdOf<T>, Vec<u8>, T::AccountId, AssetBalanceOf<T>),
 		Burned(AssetIdOf<T>, T::AccountId, Vec<u8>, AssetBalanceOf<T>),
 		Locked(T::AccountId, Vec<u8>, BalanceOf<T>),
-		Unlocked(T::AccountId, BalanceOf<T>),
+		Unlocked(Vec<u8>, T::AccountId, BalanceOf<T>),
 	}
 
 	// Errors inform users that something went wrong.
@@ -703,6 +705,7 @@ pub mod pallet {
 		}
 
 		fn unlock_inner(
+			sender_id: Vec<u8>,
 			receiver: T::AccountId,
 			amount: u128,
 		) -> DispatchResultWithPostInfo {
@@ -710,7 +713,7 @@ pub mod pallet {
 			let amount_unwrappped = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
 			// unlock native token
 			T::Currency::transfer(&Self::account_id(), &receiver, amount_unwrappped, KeepAlive)?;
-			Self::deposit_event(Event::Unlocked(receiver, amount_unwrappped));
+			Self::deposit_event(Event::Unlocked(sender_id, receiver, amount_unwrappped));
 
 			Ok(().into())
 		}
@@ -773,24 +776,18 @@ pub mod pallet {
 								log::info!("️️️🐙 failed to mint asset: {:?}", error);
 								return Err(error);
 							}
-						} else if event.token_id == Self::appchain_token_id() {
-							log::info!(
-								"🐙 unlock native token, sender_id:{:?}, receiver:{:?}, amount:{:?}",
-								event.sender_id,
-								event.receiver,
-								event.amount,
-							);
-
-							if let Err(error) = Self::unlock_inner(
-								event.receiver,
-								event.amount,
-							) {
-								log::info!("️️️🐙 failed to unlock native token: {:?}", error);
-								return Err(error);
-							}
-
 						} else {
 							return Err(Error::<T>::WrongAssetId.into());
+						}
+					}
+					Observation::BurnNativeToken(event) => {
+						if let Err(error) = Self::unlock_inner(
+							event.sender_id,
+							event.receiver,
+							event.amount,
+						) {
+							log::info!("️️️🐙 failed to unlock native token: {:?}", error);
+							return Err(error);
 						}
 					}
 				}
@@ -801,22 +798,17 @@ pub mod pallet {
 				}
 				<Observations<T>>::remove(seq_num);
 			
-				if matches!(observation, Observation::LockToken(_)) {
+				if matches!(observation, Observation::LockToken(_)) || 
+					matches!(observation, Observation::BurnNativeToken(_)) {
 					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
-						let resync_seq = ResyncFactSequence::<T>::get();
-						if resync_seq > 0 {
-							*next_seq = resync_seq;
-						} else if let Some(v) = seq_num.checked_add(1) {
+						if let Some(v) = next_seq.checked_add(1) {
 							*next_seq = v;
-							ResyncFactSequence::<T>::put(0);
 						} else {
 							return Err(Error::<T>::NextFactSequenceOverflow.into());
 						}
 						Ok(().into())
 					})?;
 				}
-			} else {
-				ResyncFactSequence::<T>::put(seq_num);
 			}
 
 			Ok(().into())
@@ -919,12 +911,8 @@ pub mod pallet {
 				Some(new_val_set) => {
 					let res = NextFactSequence::<T>::try_mutate(
 						|next_seq| -> DispatchResultWithPostInfo {
-							let resync_seq = ResyncFactSequence::<T>::get();
-							if resync_seq > 0 {
-								*next_seq = resync_seq;
-							} else if let Some(v) = new_val_set.sequence_number.checked_add(1) {
+							if let Some(v) = next_seq.checked_add(1) {
 								*next_seq = v;
-								ResyncFactSequence::<T>::put(0);
 							} else {
 								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
 								return Err(Error::<T>::NextFactSequenceOverflow.into());
