@@ -24,7 +24,7 @@ use sp_core::{crypto::KeyTypeId, H256};
 use sp_io::offchain_index;
 use sp_runtime::traits::StaticLookup;
 use sp_runtime::{
-	offchain::{http, storage::StorageValueRef, Duration},
+	offchain::{http, storage::{MutateStorageError, StorageRetrievalError, StorageValueRef}, Duration},
 	traits::{Convert, Hash, IdentifyAccount, Keccak256, CheckedConversion},
 	DigestItem, RuntimeDebug,
 };
@@ -618,15 +618,11 @@ pub mod pallet {
 			// low-level method of local storage API, which means that only one worker
 			// will be able to "acquire a lock" and send a transaction if multiple workers
 			// happen to be executed concurrently.
-			let res = val.mutate(|last_send: Option<Option<T::BlockNumber>>| {
-				// We match on the value decoded from the storage. The first `Option`
-				// indicates if the value was present in the storage at all,
-				// the second (inner) `Option` indicates if the value was succesfuly
-				// decoded to expected type (`T::BlockNumber` in our case).
+			let res = val.mutate(|last_send: Result<Option<T::BlockNumber>, StorageRetrievalError>| {
 				match last_send {
 					// If we already have a value in storage and the block number is recent enough
 					// we avoid sending another transaction at this time.
-					Some(Some(block)) if block_number < block + T::GracePeriod::get() => {
+					Ok(Some(block)) if block_number < block + T::GracePeriod::get() => {
 						Err(RECENTLY_SENT)
 					}
 					// In every other case we attempt to acquire the lock and send a transaction.
@@ -642,15 +638,15 @@ pub mod pallet {
 			// written to in the meantime.
 			match res {
 				// The value has been set correctly, which means we can safely send a transaction now.
-				Ok(Ok(_block_number)) => true,
+				Ok(_block_number) => true,
 				// We are in the grace period, we should not send a transaction this time.
-				Err(RECENTLY_SENT) => false,
+				Err(MutateStorageError::ValueFunctionFailed(RECENTLY_SENT)) => false,
 				// We wanted to send a transaction, but failed to write the block number (acquire a
 				// lock). This indicates that another offchain worker that was running concurrently
 				// most likely executed the same logic and succeeded at writing to storage.
 				// Thus we don't really want to send the transaction, knowing that the other run
 				// already did.
-				Ok(Err(_)) => false,
+				Err(MutateStorageError::ConcurrentModification(_)) => false,
 			}
 		}
 
