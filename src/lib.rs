@@ -598,6 +598,10 @@ pub mod pallet {
 	}
 
 	impl<T: Config> Pallet<T> {
+		fn account_id() -> T::AccountId {
+			T::PalletId::get().into_account()
+		}
+
 		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u128)>) {
 			if vals.len() != 0 {
 				assert!(
@@ -984,12 +988,6 @@ pub mod pallet {
 
 		fn on_disabled(_i: usize) {
 			// ignore
-		}
-	}
-
-	impl<T: Config> Pallet<T> {
-		pub fn account_id() -> T::AccountId {
-			T::PalletId::get().into_account()
 		}
 	}
 }
