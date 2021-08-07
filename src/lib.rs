@@ -8,19 +8,30 @@ use alloc::string::{String, ToString};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use codec::{Decode, Encode};
-use frame_support::traits::OneSessionHandler;
-use frame_support::{traits::tokens::fungibles, transactional};
-use frame_system::offchain::AppCrypto;
+use frame_support::{
+	traits::{
+		tokens::fungibles,
+		Currency,
+		ExistenceRequirement::{AllowDeath, KeepAlive},
+		OneSessionHandler,
+	},
+	transactional,
+	{sp_runtime::traits::AccountIdConversion, PalletId},
+};
 use frame_system::offchain::{
-	CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer, SigningTypes,
+	AppCrypto, CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer,
+	SigningTypes,
 };
 use serde::{de, Deserialize, Deserializer};
 use sp_core::{crypto::KeyTypeId, H256};
 use sp_io::offchain_index;
-use sp_runtime::traits::StaticLookup;
 use sp_runtime::{
-	offchain::{http, storage::{MutateStorageError, StorageRetrievalError, StorageValueRef}, Duration},
-	traits::{Convert, Hash, IdentifyAccount, Keccak256},
+	offchain::{
+		http,
+		storage::{MutateStorageError, StorageRetrievalError, StorageValueRef},
+		Duration,
+	},
+	traits::{CheckedConversion, Convert, Hash, IdentifyAccount, Keccak256, StaticLookup},
 	DigestItem, RuntimeDebug,
 };
 use sp_std::prelude::*;
@@ -61,6 +72,9 @@ pub type AuthorityId = crypto::Public;
 
 type AssetId = u32;
 type AssetBalance = u128;
+
+type BalanceOf<T> =
+	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 type AssetBalanceOf<T> =
 	<<T as Config>::Assets as fungibles::Inspect<<T as frame_system::Config>::AccountId>>::Balance;
@@ -104,6 +118,20 @@ pub struct ValidatorSet<AccountId> {
 }
 
 #[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct BurnEvent<AccountId> {
+	/// The sequence number of this fact on the mainchain.
+	#[serde(rename = "seq_num")]
+	sequence_number: u32,
+	#[serde(with = "serde_bytes")]
+	sender_id: Vec<u8>,
+	#[serde(deserialize_with = "deserialize_from_hex_str")]
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	receiver: AccountId,
+	#[serde(deserialize_with = "deserialize_from_str")]
+	amount: u128,
+}
+
+#[derive(Deserialize, Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct LockEvent<AccountId> {
 	/// The sequence number of this fact on the mainchain.
 	#[serde(rename = "seq_num")]
@@ -134,14 +162,17 @@ pub enum Observation<AccountId> {
 	#[serde(bound(deserialize = "AccountId: Decode"))]
 	UpdateValidatorSet(ValidatorSet<AccountId>),
 	#[serde(bound(deserialize = "AccountId: Decode"))]
-	LockToken(LockEvent<AccountId>),
+	Burn(BurnEvent<AccountId>),
+	#[serde(bound(deserialize = "AccountId: Decode"))]
+	LockAsset(LockEvent<AccountId>),
 }
 
 impl<AccountId> Observation<AccountId> {
 	fn sequence_number(&self) -> u32 {
 		match self {
 			Observation::UpdateValidatorSet(val_set) => val_set.sequence_number,
-			Observation::LockToken(event) => event.sequence_number,
+			Observation::LockAsset(event) => event.sequence_number,
+			Observation::Burn(event) => event.sequence_number,
 		}
 	}
 }
@@ -163,7 +194,14 @@ impl<T: SigningTypes> SignedPayload<T>
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct XTransferPayload {
+pub struct LockPayload {
+	pub sender: Vec<u8>,
+	pub receiver_id: Vec<u8>,
+	pub amount: u128,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
+pub struct BurnAssetPayload {
 	pub token_id: Vec<u8>,
 	pub sender: Vec<u8>,
 	pub receiver_id: Vec<u8>,
@@ -171,8 +209,15 @@ pub struct XTransferPayload {
 }
 
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub enum PayloadType {
+	Lock,
+	BurnAsset,
+}
+
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Message {
 	nonce: u64,
+	payload_type: PayloadType,
 	payload: Vec<u8>,
 }
 
@@ -195,6 +240,10 @@ pub mod pallet {
 
 		/// The overarching dispatch call type.
 		type Call: From<Call<Self>>;
+
+		type PalletId: Get<PalletId>;
+
+		type Currency: Currency<Self::AccountId>;
 
 		type Assets: fungibles::Mutate<
 			<Self as frame_system::Config>::AccountId,
@@ -323,8 +372,10 @@ pub mod pallet {
 		/// Event generated when a new voter votes on a validator set.
 		/// \[validator_set, voter\]
 		NewVoterFor(ValidatorSet<T::AccountId>, T::AccountId),
-		Minted(AssetIdOf<T>, Vec<u8>, T::AccountId, AssetBalanceOf<T>),
-		Burned(AssetIdOf<T>, T::AccountId, Vec<u8>, AssetBalanceOf<T>),
+		Locked(T::AccountId, Vec<u8>, BalanceOf<T>),
+		Unlocked(Vec<u8>, T::AccountId, BalanceOf<T>),
+		AssetMinted(AssetIdOf<T>, Vec<u8>, T::AccountId, AssetBalanceOf<T>),
+		AssetBurned(AssetIdOf<T>, T::AccountId, Vec<u8>, AssetBalanceOf<T>),
 	}
 
 	// Errors inform users that something went wrong.
@@ -338,6 +389,8 @@ pub mod pallet {
 		NotValidator,
 		/// Nonce overflow.
 		NonceOverflow,
+		/// Amount overflow.
+		AmountOverflow,
 		/// Next fact sequence overflow.
 		NextFactSequenceOverflow,
 		/// Wrong Asset Id.
@@ -467,9 +520,44 @@ pub mod pallet {
 
 		// cross chain transfer
 
+		// There are 2 kinds of assets:
+		// 1. native token on appchain
+		// mainchain:mint() <- appchain:lock()
+		// mainchain:burn() -> appchain:unlock()
+		//
+		// 2. NEP141 asset on mainchain
+		// mainchain:lock_asset()   -> appchain:mint_asset()
+		// mainchain:unlock_asset() <- appchain:burn_asset()
+
 		#[pallet::weight(0)]
 		#[transactional]
-		pub fn mint(
+		pub fn lock(
+			origin: OriginFor<T>,
+			receiver_id: Vec<u8>,
+			amount: BalanceOf<T>,
+		) -> DispatchResultWithPostInfo {
+			let who = ensure_signed(origin)?;
+
+			T::Currency::transfer(&who, &Self::account_id(), amount, AllowDeath)?;
+
+			let amount_wrapped: u128 = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
+			let prefix = String::from("0x");
+			let hex_sender = prefix + &hex::encode(who.encode());
+			let message = LockPayload {
+				sender: hex_sender.into_bytes(),
+				receiver_id: receiver_id.clone(),
+				amount: amount_wrapped,
+			};
+
+			Self::submit(&who, PayloadType::Lock, &message.try_to_vec().unwrap())?;
+			Self::deposit_event(Event::Locked(who, receiver_id, amount));
+
+			Ok(().into())
+		}
+
+		#[pallet::weight(0)]
+		#[transactional]
+		pub fn mint_asset(
 			origin: OriginFor<T>,
 			asset_id: AssetIdOf<T>,
 			sender_id: Vec<u8>,
@@ -479,12 +567,12 @@ pub mod pallet {
 			ensure_root(origin)?;
 
 			let receiver = T::Lookup::lookup(receiver)?;
-			Self::mint_inner(asset_id, sender_id, receiver, amount)
+			Self::mint_asset_inner(asset_id, sender_id, receiver, amount)
 		}
 
 		#[pallet::weight(0)]
 		#[transactional]
-		pub fn burn(
+		pub fn burn_asset(
 			origin: OriginFor<T>,
 			asset_id: AssetIdOf<T>,
 			receiver_id: Vec<u8>,
@@ -501,21 +589,25 @@ pub mod pallet {
 
 			let prefix = String::from("0x");
 			let hex_sender = prefix + &hex::encode(sender.encode());
-			let message = XTransferPayload {
+			let message = BurnAssetPayload {
 				token_id,
 				sender: hex_sender.into_bytes(),
 				receiver_id: receiver_id.clone(),
 				amount,
 			};
 
-			Self::submit(&sender, &message.try_to_vec().unwrap())?;
-			Self::deposit_event(Event::Burned(asset_id, sender, receiver_id, amount));
+			Self::submit(&sender, PayloadType::BurnAsset, &message.try_to_vec().unwrap())?;
+			Self::deposit_event(Event::AssetBurned(asset_id, sender, receiver_id, amount));
 
 			Ok(().into())
 		}
 	}
 
 	impl<T: Config> Pallet<T> {
+		fn account_id() -> T::AccountId {
+			T::PalletId::get().into_account()
+		}
+
 		fn initialize_validators(vals: &Vec<(<T as frame_system::Config>::AccountId, u128)>) {
 			if vals.len() != 0 {
 				assert!(
@@ -548,17 +640,18 @@ pub mod pallet {
 			// low-level method of local storage API, which means that only one worker
 			// will be able to "acquire a lock" and send a transaction if multiple workers
 			// happen to be executed concurrently.
-			let res = val.mutate(|last_send: Result<Option<T::BlockNumber>, StorageRetrievalError>| {
-				match last_send {
-					// If we already have a value in storage and the block number is recent enough
-					// we avoid sending another transaction at this time.
-					Ok(Some(block)) if block_number < block + T::GracePeriod::get() => {
-						Err(RECENTLY_SENT)
+			let res =
+				val.mutate(|last_send: Result<Option<T::BlockNumber>, StorageRetrievalError>| {
+					match last_send {
+						// If we already have a value in storage and the block number is recent enough
+						// we avoid sending another transaction at this time.
+						Ok(Some(block)) if block_number < block + T::GracePeriod::get() => {
+							Err(RECENTLY_SENT)
+						}
+						// In every other case we attempt to acquire the lock and send a transaction.
+						_ => Ok(block_number),
 					}
-					// In every other case we attempt to acquire the lock and send a transaction.
-					_ => Ok(block_number),
-				}
-			});
+				});
 
 			// The result of `mutate` call will give us a nested `Result` type.
 			// The first one matches the return of the closure passed to `mutate`, i.e.
@@ -618,14 +711,27 @@ pub mod pallet {
 			Ok(())
 		}
 
-		fn mint_inner(
+		fn unlock_inner(
+			sender_id: Vec<u8>,
+			receiver: T::AccountId,
+			amount: u128,
+		) -> DispatchResultWithPostInfo {
+			let amount_unwrapped = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
+			// unlock native token
+			T::Currency::transfer(&Self::account_id(), &receiver, amount_unwrapped, KeepAlive)?;
+			Self::deposit_event(Event::Unlocked(sender_id, receiver, amount_unwrapped));
+
+			Ok(().into())
+		}
+
+		fn mint_asset_inner(
 			asset_id: AssetIdOf<T>,
 			sender_id: Vec<u8>,
 			receiver: T::AccountId,
 			amount: AssetBalanceOf<T>,
 		) -> DispatchResultWithPostInfo {
 			<T::Assets as fungibles::Mutate<T::AccountId>>::mint_into(asset_id, &receiver, amount)?;
-			Self::deposit_event(Event::Minted(asset_id, sender_id, receiver, amount));
+			Self::deposit_event(Event::AssetMinted(asset_id, sender_id, receiver, amount));
 
 			Ok(().into())
 		}
@@ -661,16 +767,25 @@ pub mod pallet {
 			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
 			//
 
+			let seq_num = observation.sequence_number();
+
 			if weight == total_weight {
-				let seq_num = observation.sequence_number();
 				match observation.clone() {
 					Observation::UpdateValidatorSet(val_set) => {
 						ensure!(val_set.set_id == validator_set.set_id + 1, Error::<T>::WrongSetId);
 
 						<NextValidatorSet<T>>::put(val_set);
 					}
-					Observation::LockToken(event) => {
-						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(event.token_id) {
+					Observation::Burn(event) => {
+						if let Err(error) =
+							Self::unlock_inner(event.sender_id, event.receiver, event.amount)
+						{
+							log::info!("️️️🐙 failed to unlock native token: {:?}", error);
+							return Err(error);
+						}
+					}
+					Observation::LockAsset(event) => {
+						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(&event.token_id) {
 							log::info!(
 								"️️️🐙 mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
 								asset_id,
@@ -678,7 +793,7 @@ pub mod pallet {
 								event.receiver,
 								event.amount,
 							);
-							if let Err(error) = Self::mint_inner(
+							if let Err(error) = Self::mint_asset_inner(
 								asset_id,
 								event.sender_id,
 								event.receiver,
@@ -699,7 +814,9 @@ pub mod pallet {
 				}
 				<Observations<T>>::remove(seq_num);
 
-				if matches!(observation, Observation::LockToken(_)) {
+				if matches!(observation, Observation::LockAsset(_))
+					|| matches!(observation, Observation::Burn(_))
+				{
 					NextFactSequence::<T>::try_mutate(|next_seq| -> DispatchResultWithPostInfo {
 						if let Some(v) = next_seq.checked_add(1) {
 							*next_seq = v;
@@ -751,7 +868,11 @@ pub mod pallet {
 				.build()
 		}
 
-		fn submit(_who: &T::AccountId, payload: &[u8]) -> DispatchResultWithPostInfo {
+		fn submit(
+			_who: &T::AccountId,
+			payload_type: PayloadType,
+			payload: &[u8],
+		) -> DispatchResultWithPostInfo {
 			Nonce::<T>::try_mutate(|nonce| -> DispatchResultWithPostInfo {
 				if let Some(v) = nonce.checked_add(1) {
 					*nonce = v;
@@ -759,7 +880,11 @@ pub mod pallet {
 					return Err(Error::<T>::NonceOverflow.into());
 				}
 
-				MessageQueue::<T>::append(Message { nonce: *nonce, payload: payload.to_vec() });
+				MessageQueue::<T>::append(Message {
+					nonce: *nonce,
+					payload_type,
+					payload: payload.to_vec(),
+				});
 				Ok(().into())
 			})
 		}
