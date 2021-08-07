@@ -194,23 +194,30 @@ impl<T: SigningTypes> SignedPayload<T>
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct XTransferPayload {
-	pub token_id: Vec<u8>,
+pub struct LockPayload {
 	pub sender: Vec<u8>,
 	pub receiver_id: Vec<u8>,
 	pub amount: u128,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, PartialEq, Eq, RuntimeDebug)]
-pub struct XTransferPayloadWithoutTokenId {
+pub struct BurnAssetPayload {
+	pub token_id: Vec<u8>,
 	pub sender: Vec<u8>,
 	pub receiver_id: Vec<u8>,
 	pub amount: u128,
 }
 
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
+pub enum PayloadType {
+	Lock,
+	BurnAsset,
+}
+
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 pub struct Message {
 	nonce: u64,
+	payload_type: PayloadType,
 	payload: Vec<u8>,
 }
 
@@ -365,10 +372,10 @@ pub mod pallet {
 		/// Event generated when a new voter votes on a validator set.
 		/// \[validator_set, voter\]
 		NewVoterFor(ValidatorSet<T::AccountId>, T::AccountId),
-		AssetMinted(AssetIdOf<T>, Vec<u8>, T::AccountId, AssetBalanceOf<T>),
-		AssetBurned(AssetIdOf<T>, T::AccountId, Vec<u8>, AssetBalanceOf<T>),
 		Locked(T::AccountId, Vec<u8>, BalanceOf<T>),
 		Unlocked(Vec<u8>, T::AccountId, BalanceOf<T>),
+		AssetMinted(AssetIdOf<T>, Vec<u8>, T::AccountId, AssetBalanceOf<T>),
+		AssetBurned(AssetIdOf<T>, T::AccountId, Vec<u8>, AssetBalanceOf<T>),
 	}
 
 	// Errors inform users that something went wrong.
@@ -524,6 +531,32 @@ pub mod pallet {
 
 		#[pallet::weight(0)]
 		#[transactional]
+		pub fn lock(
+			origin: OriginFor<T>,
+			receiver_id: Vec<u8>,
+			amount: BalanceOf<T>,
+		) -> DispatchResultWithPostInfo {
+			let who = ensure_signed(origin)?;
+
+			T::Currency::transfer(&who, &Self::account_id(), amount, AllowDeath)?;
+
+			let amount_wrapped: u128 = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
+			let prefix = String::from("0x");
+			let hex_sender = prefix + &hex::encode(who.encode());
+			let message = LockPayload {
+				sender: hex_sender.into_bytes(),
+				receiver_id: receiver_id.clone(),
+				amount: amount_wrapped,
+			};
+
+			Self::submit(&who, PayloadType::Lock, &message.try_to_vec().unwrap())?;
+			Self::deposit_event(Event::Locked(who, receiver_id, amount));
+
+			Ok(().into())
+		}
+
+		#[pallet::weight(0)]
+		#[transactional]
 		pub fn mint_asset(
 			origin: OriginFor<T>,
 			asset_id: AssetIdOf<T>,
@@ -556,42 +589,15 @@ pub mod pallet {
 
 			let prefix = String::from("0x");
 			let hex_sender = prefix + &hex::encode(sender.encode());
-			let message = XTransferPayload {
+			let message = BurnAssetPayload {
 				token_id,
 				sender: hex_sender.into_bytes(),
 				receiver_id: receiver_id.clone(),
 				amount,
 			};
 
-			Self::submit(&sender, &message.try_to_vec().unwrap())?;
+			Self::submit(&sender, PayloadType::BurnAsset, &message.try_to_vec().unwrap())?;
 			Self::deposit_event(Event::AssetBurned(asset_id, sender, receiver_id, amount));
-
-			Ok(().into())
-		}
-
-		#[pallet::weight(0)]
-		#[transactional]
-		pub fn lock(
-			origin: OriginFor<T>,
-			receiver_id: Vec<u8>,
-			amount: BalanceOf<T>,
-		) -> DispatchResultWithPostInfo {
-			let who = ensure_signed(origin)?;
-
-			T::Currency::transfer(&who, &Self::account_id(), amount, AllowDeath)?;
-
-			let amount_unwrappped: u128 =
-				amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
-			let prefix = String::from("0x");
-			let hex_sender = prefix + &hex::encode(who.encode());
-			let message = XTransferPayloadWithoutTokenId {
-				sender: hex_sender.into_bytes(),
-				receiver_id: receiver_id.clone(),
-				amount: amount_unwrappped,
-			};
-
-			Self::submit(&who, &message.try_to_vec().unwrap())?;
-			Self::deposit_event(Event::Locked(who, receiver_id, amount));
 
 			Ok(().into())
 		}
@@ -710,10 +716,10 @@ pub mod pallet {
 			receiver: T::AccountId,
 			amount: u128,
 		) -> DispatchResultWithPostInfo {
-			let amount_unwrappped = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
+			let amount_unwrapped = amount.checked_into().ok_or(Error::<T>::AmountOverflow)?;
 			// unlock native token
-			T::Currency::transfer(&Self::account_id(), &receiver, amount_unwrappped, KeepAlive)?;
-			Self::deposit_event(Event::Unlocked(sender_id, receiver, amount_unwrappped));
+			T::Currency::transfer(&Self::account_id(), &receiver, amount_unwrapped, KeepAlive)?;
+			Self::deposit_event(Event::Unlocked(sender_id, receiver, amount_unwrapped));
 
 			Ok(().into())
 		}
@@ -770,6 +776,14 @@ pub mod pallet {
 
 						<NextValidatorSet<T>>::put(val_set);
 					}
+					Observation::Burn(event) => {
+						if let Err(error) =
+							Self::unlock_inner(event.sender_id, event.receiver, event.amount)
+						{
+							log::info!("️️️🐙 failed to unlock native token: {:?}", error);
+							return Err(error);
+						}
+					}
 					Observation::LockAsset(event) => {
 						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(&event.token_id) {
 							log::info!(
@@ -790,14 +804,6 @@ pub mod pallet {
 							}
 						} else {
 							return Err(Error::<T>::WrongAssetId.into());
-						}
-					}
-					Observation::Burn(event) => {
-						if let Err(error) =
-							Self::unlock_inner(event.sender_id, event.receiver, event.amount)
-						{
-							log::info!("️️️🐙 failed to unlock native token: {:?}", error);
-							return Err(error);
 						}
 					}
 				}
@@ -862,7 +868,11 @@ pub mod pallet {
 				.build()
 		}
 
-		fn submit(_who: &T::AccountId, payload: &[u8]) -> DispatchResultWithPostInfo {
+		fn submit(
+			_who: &T::AccountId,
+			payload_type: PayloadType,
+			payload: &[u8],
+		) -> DispatchResultWithPostInfo {
 			Nonce::<T>::try_mutate(|nonce| -> DispatchResultWithPostInfo {
 				if let Some(v) = nonce.checked_add(1) {
 					*nonce = v;
@@ -870,7 +880,11 @@ pub mod pallet {
 					return Err(Error::<T>::NonceOverflow.into());
 				}
 
-				MessageQueue::<T>::append(Message { nonce: *nonce, payload: payload.to_vec() });
+				MessageQueue::<T>::append(Message {
+					nonce: *nonce,
+					payload_type,
+					payload: payload.to_vec(),
+				});
 				Ok(().into())
 			})
 		}
