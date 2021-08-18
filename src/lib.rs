@@ -471,9 +471,6 @@ pub mod pallet {
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		/// Submit observations.
-		///
-		/// If the set already exists in the Observations, then the only thing
-		/// to do is vote for this set.
 		#[pallet::weight(0)]
 		pub fn submit_observations(
 			origin: OriginFor<T>,
@@ -687,12 +684,19 @@ pub mod pallet {
 			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
 
-			let obs = Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, limit)
+			let mut obs = Self::fetch_facts(relay_contract, appchain_id, next_fact_sequence, limit)
 				.map_err(|_| "Failed to fetch facts")?;
 
 			if obs.len() == 0 {
 				return Ok(());
 			}
+			// sort observations by sequence_number
+			obs.sort_by(|a, b| a.sequence_number().cmp(&b.sequence_number()));
+
+			// there can only be one update_validator_set at most
+			let mut iter =
+				obs.split_inclusive(|o| matches! {o, Observation::UpdateValidatorSet(_)});
+			let obs = iter.next().unwrap().to_vec();
 
 			// -- Sign using any account
 			let (_, result) = Signer::<T, T::AuthorityId>::any_account()
@@ -736,6 +740,8 @@ pub mod pallet {
 			Ok(().into())
 		}
 
+		/// If the observation already exists in the Observations, then the only thing
+		/// to do is vote for this observation.
 		fn submit_observation(
 			observation: Observation<T::AccountId>,
 			validator_set: &ValidatorSet<T::AccountId>,
