@@ -6,6 +6,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
 
+use crate::traits::SessionInterface;
 use borsh::{BorshDeserialize, BorshSerialize};
 use codec::{Decode, Encode};
 use frame_support::{
@@ -39,6 +40,7 @@ use sp_std::prelude::*;
 pub use pallet::*;
 
 mod mainchain;
+mod traits;
 
 #[cfg(test)]
 mod mock;
@@ -229,9 +231,7 @@ pub mod pallet {
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config:
-		CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_session::Config
-	{
+	pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config {
 		/// The identifier type for an offchain worker.
 		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
@@ -250,6 +250,7 @@ pub mod pallet {
 			AssetId = AssetId,
 			Balance = AssetBalance,
 		>;
+		type SessionInterface: traits::SessionInterface<Self::AccountId>;
 
 		// Configuration parameters
 
@@ -488,12 +489,11 @@ pub mod pallet {
 			let who = payload.public.clone().into_account();
 
 			let val = cur_val_set.validators.iter().find(|v| {
-				let id = <pallet_session::Module<T>>::key_owner(
+				T::SessionInterface::same_validator(
 					KEY_TYPE,
 					&payload.public.clone().into_account().encode(),
-				);
-				log::info!("🐙 check {:#?} == {:#?}", v.id, id);
-				<T as pallet_session::Config>::ValidatorIdOf::convert(v.id.clone()) == id
+					v.id.clone(),
+				)
 			});
 			if val.is_none() {
 				log::info!(
@@ -1008,6 +1008,25 @@ pub mod pallet {
 
 		fn on_disabled(_i: usize) {
 			// ignore
+		}
+	}
+
+	impl<T: Config> traits::SessionInterface<<T as frame_system::Config>::AccountId> for T
+	where
+		T: pallet_session::Config<ValidatorId = <T as frame_system::Config>::AccountId>,
+	{
+		fn same_validator(
+			id: KeyTypeId,
+			key_data: &[u8],
+			validator: <T as frame_system::Config>::AccountId,
+		) -> bool {
+			let who = <pallet_session::Pallet<T>>::key_owner(id, key_data);
+			if who.is_none() {
+				return false;
+			}
+			log::info!("🐙 check {:#?} == {:#?}", validator, who);
+
+			T::ValidatorIdOf::convert(validator) == who
 		}
 	}
 }
