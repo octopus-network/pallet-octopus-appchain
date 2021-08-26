@@ -33,6 +33,9 @@ sp-core = { default-features = false, version = "3.0.0" }
 sp-io = { default-features = false, version = "3.0.0" }
 sp-runtime = { default-features = false, version = "3.0.0" }
 sp-std = { default-features = false, version = "3.0.0" }
+sp-npos-elections = { default-features = false, version = "3.0.0" }
+
+pallet-octopus-lpos = { default-features = false, path = "../octopus-lpos" }
 
 [dev-dependencies]
 sp-keystore = { default-features = false, version = '0.9.0' }
@@ -58,6 +61,8 @@ std = [
 	'sp-io/std',
 	'sp-runtime/std',
 	'sp-std/std',
+	'sp-npos-elections/std',
+	'pallet-octopus-lpos/std',
 ]
 
 runtime-benchmarks = ["frame-benchmarking"]

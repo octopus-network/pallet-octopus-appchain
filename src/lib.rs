@@ -26,6 +26,7 @@ use frame_system::offchain::{
 use serde::{de, Deserialize, Deserializer};
 use sp_core::{crypto::KeyTypeId, H256};
 use sp_io::offchain_index;
+use sp_npos_elections::{to_supports, StakedAssignment, Supports};
 use sp_runtime::{
 	offchain::{
 		http,
@@ -927,64 +928,6 @@ pub mod pallet {
 		}
 	}
 
-	pub type SessionIndex = u32;
-
-	impl<T: Config> pallet_session::SessionManager<T::AccountId> for Pallet<T> {
-		fn new_session(new_index: SessionIndex) -> Option<Vec<T::AccountId>> {
-			log::info!(
-				"🐙 [{:?}] planning new_session({})",
-				<frame_system::Pallet<T>>::block_number(),
-				new_index
-			);
-
-			let next_val_set = <NextValidatorSet<T>>::get();
-			match next_val_set {
-				Some(new_val_set) => {
-					let res = NextFactSequence::<T>::try_mutate(
-						|next_seq| -> DispatchResultWithPostInfo {
-							if let Some(v) = next_seq.checked_add(1) {
-								*next_seq = v;
-							} else {
-								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
-								return Err(Error::<T>::NextFactSequenceOverflow.into());
-							}
-							Ok(().into())
-						},
-					);
-
-					if let Ok(_) = res {
-						<CurrentValidatorSet<T>>::put(new_val_set.clone());
-						<NextValidatorSet<T>>::kill();
-						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
-						Some(new_val_set.validators.into_iter().map(|vals| vals.id).collect())
-					} else {
-						None
-					}
-				}
-				None => {
-					log::info!("🐙 validator set has't changed");
-					None
-				}
-			}
-		}
-
-		fn start_session(start_index: SessionIndex) {
-			log::info!(
-				"🐙 [{:?}] starting start_session({})",
-				<frame_system::Pallet<T>>::block_number(),
-				start_index
-			);
-		}
-
-		fn end_session(end_index: SessionIndex) {
-			log::info!(
-				"🐙 [{:?}] ending end_session({})",
-				<frame_system::Pallet<T>>::block_number(),
-				end_index
-			);
-		}
-	}
-
 	impl<T: Config> sp_runtime::BoundToRuntimeAppPublic for Pallet<T> {
 		type Public = AuthorityId;
 	}
@@ -1027,6 +970,51 @@ pub mod pallet {
 			log::info!("🐙 check {:#?} == {:#?}", validator, who);
 
 			T::ValidatorIdOf::convert(validator) == who
+		}
+	}
+
+	impl<T: Config> pallet_octopus_lpos::ElectionProvider<T::AccountId> for Pallet<T> {
+		fn elect() -> Supports<T::AccountId> {
+			let mut staked = vec![];
+			let mut winners = vec![];
+			let next_val_set = <NextValidatorSet<T>>::get();
+			match next_val_set {
+				Some(new_val_set) => {
+					// TODO
+					let res = NextFactSequence::<T>::try_mutate(
+						|next_seq| -> DispatchResultWithPostInfo {
+							if let Some(v) = next_seq.checked_add(1) {
+								*next_seq = v;
+							} else {
+								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
+								return Err(Error::<T>::NextFactSequenceOverflow.into());
+							}
+							Ok(().into())
+						},
+					);
+
+					if let Ok(_) = res {
+						<CurrentValidatorSet<T>>::put(new_val_set.clone());
+						<NextValidatorSet<T>>::kill();
+						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
+						staked = new_val_set
+							.clone()
+							.validators
+							.into_iter()
+							.map(|vals| StakedAssignment {
+								who: vals.id.clone(),
+								distribution: vec![(vals.id, vals.weight)],
+							})
+							.collect();
+						winners = new_val_set.validators.into_iter().map(|vals| vals.id).collect();
+					}
+				}
+				None => {
+					log::info!("🐙 validator set has't changed");
+				}
+			}
+
+			to_supports(&winners, &staked).unwrap()
 		}
 	}
 }
