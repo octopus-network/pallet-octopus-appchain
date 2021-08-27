@@ -34,7 +34,7 @@ impl<T: Config> Pallet<T> {
 		// since we are running in a custom WASM execution environment we can't simply
 		// import the library here.
 		let args = Self::encode_args(appchain_id, start, limit).ok_or_else(|| {
-			log::info!("🐙 Encode args error");
+			log!(info, "Encode args error");
 			http::Error::Unknown
 		})?;
 
@@ -79,7 +79,7 @@ impl<T: Config> Pallet<T> {
 		let response = pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
 		// Let's check the status code before we proceed to reading the response.
 		if response.code != 200 {
-			log::info!("🐙 Unexpected status code: {}", response.code);
+			log!(info, "Unexpected status code: {}", response.code);
 			return Err(http::Error::Unknown);
 		}
 
@@ -87,16 +87,16 @@ impl<T: Config> Pallet<T> {
 		// Note that the return object allows you to read the body in chunks as well
 		// with a way to control the deadline.
 		let body = response.body().collect::<Vec<u8>>();
-		log::info!("🐙 body: {:?}", body);
+		log!(info, "body: {:?}", body);
 
 		// TODO
 		let json_response: Response = serde_json::from_slice(&body).unwrap();
-		log::info!("🐙 json_response: {:?}", json_response);
+		log!(info, "json_response: {:?}", json_response);
 
 		let obs: Vec<Observation<<T as frame_system::Config>::AccountId>> =
 			serde_json::from_slice(&json_response.result.result).unwrap();
 
-		log::info!("🐙 Got observations: {:?}", obs);
+		log!(info, "Got observations: {:?}", obs);
 
 		Ok(obs)
 	}

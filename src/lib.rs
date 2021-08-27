@@ -40,6 +40,19 @@ use sp_std::prelude::*;
 
 pub use pallet::*;
 
+pub(crate) const LOG_TARGET: &'static str = "runtime::octopus-appchain";
+
+// syntactic sugar for logging.
+#[macro_export]
+macro_rules! log {
+	($level:tt, $patter:expr $(, $values:expr)* $(,)?) => {
+		log::$level!(
+			target: crate::LOG_TARGET,
+			concat!("[{:?}] 🐙 ", $patter), <frame_system::Pallet<T>>::block_number() $(, $values)*
+		)
+	};
+}
+
 mod mainchain;
 mod traits;
 
@@ -422,7 +435,7 @@ pub mod pallet {
 				return;
 			}
 			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
-			log::info!("🐙 Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+			log!(info, "Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 
 			if !Self::should_send(block_number) {
 				return;
@@ -434,7 +447,7 @@ pub mod pallet {
 			if let Err(e) =
 				Self::observing_mainchain(block_number, relay_contract, appchain_id.clone(), limit)
 			{
-				log::info!("🐙 observing_mainchain: Error: {}", e);
+				log!(info, "observing_mainchain: Error: {}", e);
 			}
 		}
 	}
@@ -497,8 +510,9 @@ pub mod pallet {
 				)
 			});
 			if val.is_none() {
-				log::info!(
-					"🐙 Not a validator in current validator set: {:?}",
+				log!(
+					info,
+					"Not a validator in current validator set: {:?}",
 					payload.public.clone().into_account()
 				);
 				return Err(Error::<T>::NotValidator.into());
@@ -506,7 +520,7 @@ pub mod pallet {
 			let val = val.expect("Validator is valid; qed").clone();
 
 			//
-			log::info!("️️️🐙 observations: {:#?},\nwho: {:?}", payload.observations, who);
+			log!(info, "️️️observations: {:#?},\nwho: {:?}", payload.observations, who);
 			//
 
 			for observation in payload.observations.iter() {
@@ -677,10 +691,10 @@ pub mod pallet {
 			appchain_id: Vec<u8>,
 			limit: u32,
 		) -> Result<(), &'static str> {
-			log::info!("🐙 in observing_mainchain");
+			log!(info, "in observing_mainchain");
 
 			let next_fact_sequence = NextFactSequence::<T>::get();
-			log::info!("🐙 next_fact_sequence: {}", next_fact_sequence);
+			log!(info, "next_fact_sequence: {}", next_fact_sequence);
 
 			// Make an external HTTP request to fetch facts from main chain.
 			// Note this call will block until response is received.
@@ -710,8 +724,8 @@ pub mod pallet {
 					},
 					|payload, signature| Call::submit_observations(payload, signature),
 				)
-				.ok_or("🐙 No local accounts accounts available.")?;
-			result.map_err(|()| "🐙 Unable to submit transaction")?;
+				.ok_or("No local accounts accounts available.")?;
+			result.map_err(|()| "Unable to submit transaction")?;
 
 			Ok(())
 		}
@@ -759,19 +773,20 @@ pub mod pallet {
 				if !found {
 					vals.push(validator.clone());
 				} else {
-					log::info!("🐙 {:?} submits a duplicate ocw tx", validator.id);
+					log!(info, "{:?} submits a duplicate ocw tx", validator.id);
 				}
 			});
 			let total_weight: u128 = validator_set.validators.iter().map(|v| v.weight).sum();
 			let weight: u128 = <Observing<T>>::get(&observation).iter().map(|v| v.weight).sum();
 
 			//
-			log::info!(
-				"️️️🐙 observations: {:#?}",
+			log!(
+				info,
+				"️️️observations: {:#?}",
 				<Observations<T>>::get(observation.sequence_number())
 			);
-			log::info!("️️️🐙 observer: {:#?}", <Observing<T>>::get(&observation));
-			log::info!("️️️🐙 total_weight: {:?}, weight: {:?}", total_weight, weight);
+			log!(info, "️️️observer: {:#?}", <Observing<T>>::get(&observation));
+			log!(info, "️️️total_weight: {:?}, weight: {:?}", total_weight, weight);
 			//
 
 			let seq_num = observation.sequence_number();
@@ -787,14 +802,15 @@ pub mod pallet {
 						if let Err(error) =
 							Self::unlock_inner(event.sender_id, event.receiver, event.amount)
 						{
-							log::info!("️️️🐙 failed to unlock native token: {:?}", error);
+							log!(info, "️️️failed to unlock native token: {:?}", error);
 							return Err(error);
 						}
 					}
 					Observation::LockAsset(event) => {
 						if let Ok(asset_id) = <AssetIdByName<T>>::try_get(&event.token_id) {
-							log::info!(
-								"️️️🐙 mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
+							log!(
+								info,
+								"️️️mint asset:{:?}, sender_id:{:?}, receiver:{:?}, amount:{:?}",
 								asset_id,
 								event.sender_id,
 								event.receiver,
@@ -806,7 +822,7 @@ pub mod pallet {
 								event.receiver,
 								event.amount,
 							) {
-								log::info!("️️️🐙 failed to mint asset: {:?}", error);
+								log!(info, "️️️failed to mint asset: {:?}", error);
 								return Err(error);
 							}
 						} else {
@@ -846,8 +862,9 @@ pub mod pallet {
 			// Let's make sure to reject transactions from the future.
 			let current_block = <frame_system::Pallet<T>>::block_number();
 			if &current_block < block_number {
-				log::info!(
-					"🐙 InvalidTransaction => current_block: {:?}, block_number: {:?}",
+				log!(
+					info,
+					"InvalidTransaction => current_block: {:?}, block_number: {:?}",
 					current_block,
 					block_number
 				);
@@ -967,7 +984,7 @@ pub mod pallet {
 			if who.is_none() {
 				return false;
 			}
-			log::info!("🐙 check {:#?} == {:#?}", validator, who);
+			log!(info, "check {:#?} == {:#?}", validator, who);
 
 			T::ValidatorIdOf::convert(validator) == who
 		}
@@ -986,7 +1003,7 @@ pub mod pallet {
 							if let Some(v) = next_seq.checked_add(1) {
 								*next_seq = v;
 							} else {
-								log::info!("🐙 fact sequence overflow: {:?}", next_seq);
+								log!(info, "fact sequence overflow: {:?}", next_seq);
 								return Err(Error::<T>::NextFactSequenceOverflow.into());
 							}
 							Ok(().into())
@@ -996,7 +1013,7 @@ pub mod pallet {
 					if let Ok(_) = res {
 						<CurrentValidatorSet<T>>::put(new_val_set.clone());
 						<NextValidatorSet<T>>::kill();
-						log::info!("🐙 validator set changed to: {:#?}", new_val_set.clone());
+						log!(info, "validator set changed to: {:#?}", new_val_set.clone());
 						staked = new_val_set
 							.clone()
 							.validators
@@ -1010,7 +1027,20 @@ pub mod pallet {
 					}
 				}
 				None => {
-					log::info!("🐙 validator set has't changed");
+					log!(info, "validator set has't changed");
+
+					let current_val_set = <CurrentValidatorSet<T>>::get()
+						.expect("Current validator set is valid; qed");
+					staked = current_val_set
+						.clone()
+						.validators
+						.into_iter()
+						.map(|vals| StakedAssignment {
+							who: vals.id.clone(),
+							distribution: vec![(vals.id, vals.weight)],
+						})
+						.collect();
+					winners = current_val_set.validators.into_iter().map(|vals| vals.id).collect();
 				}
 			}
 
