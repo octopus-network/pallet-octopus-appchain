@@ -35,7 +35,7 @@ sp-runtime = { default-features = false, version = "3.0.0" }
 sp-std = { default-features = false, version = "3.0.0" }
 sp-npos-elections = { default-features = false, version = "3.0.0" }
 
-pallet-octopus-lpos = { default-features = false, path = "../octopus-lpos" }
+pallet-octopus-lpos = { default-features = false, git = "https://github.com/octopus-network/pallet-octopus-lpos", branch = "main" }
 
 [dev-dependencies]
 sp-keystore = { default-features = false, version = '0.9.0' }
