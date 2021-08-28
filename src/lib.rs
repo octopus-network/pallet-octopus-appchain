@@ -6,7 +6,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
 
-use crate::traits::SessionInterface;
+use crate::traits::{LposInterface, SessionInterface};
 use borsh::{BorshDeserialize, BorshSerialize};
 use codec::{Decode, Encode};
 use frame_support::{
@@ -34,7 +34,7 @@ use sp_runtime::{
 		Duration,
 	},
 	traits::{CheckedConversion, Convert, Hash, IdentifyAccount, Keccak256, StaticLookup},
-	DigestItem, RuntimeDebug,
+	DigestItem, Perbill, RuntimeDebug,
 };
 use sp_std::prelude::*;
 
@@ -54,7 +54,7 @@ macro_rules! log {
 }
 
 mod mainchain;
-mod traits;
+pub mod traits;
 
 #[cfg(test)]
 mod mock;
@@ -265,6 +265,7 @@ pub mod pallet {
 			Balance = AssetBalance,
 		>;
 		type SessionInterface: traits::SessionInterface<Self::AccountId>;
+		type LposInterface: traits::LposInterface<Self::AccountId>;
 
 		// Configuration parameters
 
@@ -791,7 +792,7 @@ pub mod pallet {
 
 			let seq_num = observation.sequence_number();
 
-			if weight == total_weight {
+			if 3 * weight > 2 * total_weight {
 				match observation.clone() {
 					Observation::UpdateValidatorSet(val_set) => {
 						ensure!(val_set.set_id == validator_set.set_id + 1, Error::<T>::WrongSetId);
@@ -990,7 +991,7 @@ pub mod pallet {
 		}
 	}
 
-	impl<T: Config> pallet_octopus_lpos::ElectionProvider<T::AccountId> for Pallet<T> {
+	impl<T: Config> traits::ElectionProvider<T::AccountId> for Pallet<T> {
 		fn elect() -> Supports<T::AccountId> {
 			let mut staked = vec![];
 			let mut winners = vec![];
@@ -1010,6 +1011,7 @@ pub mod pallet {
 						},
 					);
 
+					// TODO: ugly
 					if let Ok(_) = res {
 						<CurrentValidatorSet<T>>::put(new_val_set.clone());
 						<NextValidatorSet<T>>::kill();
@@ -1023,7 +1025,19 @@ pub mod pallet {
 								distribution: vec![(vals.id, vals.weight)],
 							})
 							.collect();
-						winners = new_val_set.validators.into_iter().map(|vals| vals.id).collect();
+						winners = new_val_set
+							.validators
+							.into_iter()
+							.map(|vals| {
+								T::LposInterface::bond_and_validate(
+									vals.id.clone(),
+									vals.weight,
+									Perbill::zero(),
+									false,
+								);
+								vals.id
+							})
+							.collect();
 					}
 				}
 				None => {
@@ -1040,7 +1054,19 @@ pub mod pallet {
 							distribution: vec![(vals.id, vals.weight)],
 						})
 						.collect();
-					winners = current_val_set.validators.into_iter().map(|vals| vals.id).collect();
+					winners = current_val_set
+						.validators
+						.into_iter()
+						.map(|vals| {
+							T::LposInterface::bond_and_validate(
+								vals.id.clone(),
+								vals.weight,
+								Perbill::zero(),
+								false,
+							);
+							vals.id
+						})
+						.collect();
 				}
 			}
 
