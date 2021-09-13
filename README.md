@@ -1,3 +1,5 @@
+*moved to https://github.com/octopus-network/octopus-pallets/tree/main/appchain*
+
 # Octopus Appchain Pallet
 [![crates.io](https://img.shields.io/crates/v/pallet-octopus-appchain.svg)](https://crates.io/crates/pallet-octopus-appchain)
 [![Released API docs](https://docs.rs/pallet-octopus-appchain/badge.svg)](https://docs.rs/pallet-octopus-appchain)
